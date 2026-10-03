@@ -1,0 +1,18 @@
+name = "oneapi"
+main = "worker.js"
+compatibility_date = "2026-08-29"
+workers_dev = true
+
+# 自定义域名路由示例 (可选)
+# routes = [
+#   { pattern = "api.yourdomain.com", custom_domain = true }
+# ]
+
+# KV 命名空间绑定 (用于持久化 API Key、监控日志与用量统计)
+[[kv_namespaces]]
+binding = "USAGE_KV"
+id = "YOUR_KV_NAMESPACE_ID"
+
+# Cloudflare Workers AI 免费模型绑定 (可选)
+[ai]
+binding = "AI"

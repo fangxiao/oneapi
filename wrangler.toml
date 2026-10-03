@@ -1,0 +1,15 @@
+name = "free-ai-gateway"
+main = "worker.js"
+compatibility_date = "2026-08-29"
+workers_dev = true
+
+routes = [
+  { pattern = "api.ailearning.top", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "USAGE_KV"
+id = "b6353982c0ea42e6a225790e0fd02f68"
+
+[ai]
+binding = "AI"

@@ -1,0 +1,16 @@
+# Cloudflare & Node
+.wrangler/
+node_modules/
+dist/
+
+# Environment and Secrets
+.env
+.env.*
+.dev.vars
+
+# OS and Editors
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

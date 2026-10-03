@@ -1,0 +1,14 @@
+{
+  "name": "oneapi",
+  "version": "1.0.0",
+  "description": "100% Free Serverless AI Gateway on Cloudflare Workers",
+  "main": "worker.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^3.100.0"
+  }
+}
