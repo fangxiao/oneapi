@@ -36,6 +36,11 @@ const CONFIG = {
       "qwen3.8-flash-next": [0.5, 2],
       "glm-5.3-flash": [1, 4],
       "glm-5.2": [1, 4],
+      "Ling-3.0-flash": [0.5, 2],
+      "Ling-3.1-flash": [0.5, 2],
+      "Ling-2.6-flash": [0.5, 2],
+      "Ling-3.0-tiny": [0.2, 0.8],
+      "Ling-3.0-flash-VL": [0.5, 2],
       "hy3": [1, 4],
       "mimo-v2.5": [0.5, 2],
       "mimo-v2.6-flash": [0.5, 2],
@@ -173,10 +178,22 @@ const CONFIG = {
         "cf-deepseek-r1-32b",
         "cf-glm-4.7-flash"
       ]
+    },
+    antling: {
+      baseUrl: "https://api.ant-ling.com/v1",
+      apiKey: "sk-studio-28fb2563e2554484bfa157d9a56dc2c0",
+      models: [
+        "Ling-3.0-flash",
+        "Ling-3.1-flash",
+        "Ling-2.6-flash",
+        "Ling-3.0-tiny",
+        "Ling-3.0-flash-VL"
+      ]
     }
   },
 
   AUTO_CANDIDATES: [
+    { provider: "antling", model: "Ling-3.0-flash" },
     { provider: "volces", model: "glm-5.3-flash" },
     { provider: "volces", model: "deepseek-v4.1-flash" },
     { provider: "volces", model: "deepseek-v4-flash" },
@@ -203,6 +220,7 @@ const CONFIG = {
 
   MULTIMODAL_CANDIDATES: [
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
+    { provider: "antling", model: "Ling-3.0-flash-VL" },
     { provider: "discovery", model: "deepseek-v4-flash-vision" },
     { provider: "eaglesine", model: "gemma-4-31b" },
     { provider: "amd", model: "DeepSeek-V4-Flash-Vision-Exp" },
@@ -376,7 +394,8 @@ const PROVIDER_SECRET_NAMES = {
   volces: "VOLCES_API_KEY",
   internai: "INTERNAI_API_KEY",
   discovery: "DISCOVERY_API_KEY",
-  openrouter: "OPENROUTER_API_KEY"
+  openrouter: "OPENROUTER_API_KEY",
+  antling: "ANTLING_API_KEY"
 };
 
 function applyProviderSecrets(env) {
@@ -3198,6 +3217,7 @@ export default {
       const channelTable = Object.entries(CONFIG.PROVIDERS).flatMap(([pKey, pVal]) => pVal.models.map(m => ({ provider: pKey, model: m })));
       const listedModels = [
         "auto", "default", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
+        "Ling-3.0-flash", "Ling-3.1-flash", "Ling-2.6-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
