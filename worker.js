@@ -3823,23 +3823,18 @@ export default {
               ...pool.filter(c => !(c.provider === pinnedCandidate.provider && c.model.toLowerCase() === pinnedCandidate.model.toLowerCase()))
             ];
           } else {
-            // 未锁定（新会话首轮）：在排名前 5 的优质主力梯队中，按会话哈希均匀分流首发，避免单供应商打爆；其余作为保底灾备
+            // 未锁定（新会话首轮）：在 auto 池所有健康可用模型中，根据会话指纹哈希均匀分流首发，成功后写入 KV 锁定
             const primaryPool = pool.filter(c => c.provider !== "amd");
             const standbyPool = pool.filter(c => c.provider === "amd");
             if (primaryPool.length > 0) {
-              const TOP_TIER_SIZE = Math.min(5, primaryPool.length);
-              const topTier = primaryPool.slice(0, TOP_TIER_SIZE);
-              const restPrimary = primaryPool.slice(TOP_TIER_SIZE);
-
               const sessionHash = getSessionFingerprint(body, request.headers, token, url);
-              const chosenIdx = sessionHash % topTier.length;
-              const startingCandidate = topTier[chosenIdx];
-              const otherTopTier = topTier.filter((_, idx) => idx !== chosenIdx);
+              const chosenIdx = sessionHash % primaryPool.length;
+              const startingCandidate = primaryPool[chosenIdx];
+              const otherCandidates = primaryPool.filter((_, idx) => idx !== chosenIdx);
 
               candidates = [
                 startingCandidate,
-                ...otherTopTier,
-                ...restPrimary,
+                ...otherCandidates,
                 ...standbyPool
               ];
             } else {
