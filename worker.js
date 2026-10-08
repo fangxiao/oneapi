@@ -196,12 +196,12 @@ const CONFIG = {
     { provider: "antling", model: "Ling-3.0-flash" },
     { provider: "volces", model: "glm-5.3-flash" },
     { provider: "volces", model: "deepseek-v4.1-flash" },
-    { provider: "volces", model: "deepseek-v4-flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
+    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
+    { provider: "volces", model: "deepseek-v4-flash" },
     { provider: "sensenova", model: "deepseek-v4-pro" },
     { provider: "sensenova", model: "glm-5.2" },
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
-    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Pro" },
     { provider: "eaglesine", model: "Kimi-K2.6" },
     { provider: "eaglesine", model: "qwen3.8-27b" },
@@ -3823,10 +3823,28 @@ export default {
               ...pool.filter(c => !(c.provider === pinnedCandidate.provider && c.model.toLowerCase() === pinnedCandidate.model.toLowerCase()))
             ];
           } else {
-            // 未锁定（新会话首轮）：按优先级顺序排列（首发钉子户 Ling-3.0-flash / glm-5.3-flash 居首）
+            // 未锁定（新会话首轮）：在排名前 5 的优质主力梯队中，按会话哈希均匀分流首发，避免单供应商打爆；其余作为保底灾备
             const primaryPool = pool.filter(c => c.provider !== "amd");
             const standbyPool = pool.filter(c => c.provider === "amd");
-            candidates = primaryPool.length > 0 ? [...primaryPool, ...standbyPool] : standbyPool;
+            if (primaryPool.length > 0) {
+              const TOP_TIER_SIZE = Math.min(5, primaryPool.length);
+              const topTier = primaryPool.slice(0, TOP_TIER_SIZE);
+              const restPrimary = primaryPool.slice(TOP_TIER_SIZE);
+
+              const sessionHash = getSessionFingerprint(body, request.headers, token, url);
+              const chosenIdx = sessionHash % topTier.length;
+              const startingCandidate = topTier[chosenIdx];
+              const otherTopTier = topTier.filter((_, idx) => idx !== chosenIdx);
+
+              candidates = [
+                startingCandidate,
+                ...otherTopTier,
+                ...restPrimary,
+                ...standbyPool
+              ];
+            } else {
+              candidates = standbyPool;
+            }
           }
         } else {
           // 严禁跨模型切换：用户显式指定具体模型时，仅在支持该具体模型的 Provider 之间做同模型故障转移，绝不切换为其他模型！
