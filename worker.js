@@ -192,7 +192,18 @@ const CONFIG = {
     }
   },
 
+  // ⚡ 极速精选把关池 (fast / auto / default): 准入门槛极高，推理极速，长上下文，高并发稳定性
   AUTO_CANDIDATES: [
+    { provider: "antling", model: "Ling-3.0-flash" },
+    { provider: "volces", model: "glm-5.3-flash" },
+    { provider: "volces", model: "deepseek-v4.1-flash" },
+    { provider: "sensenova", model: "deepseek-v4-flash" },
+    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
+    { provider: "volces", model: "deepseek-v4-flash" }
+  ],
+
+  // 🌐 全量模型池 (all): 涵盖平台接入的所有可用对话模型 (大模型、Pro、专业模型全量分流)
+  ALL_CANDIDATES: [
     { provider: "antling", model: "Ling-3.0-flash" },
     { provider: "volces", model: "glm-5.3-flash" },
     { provider: "volces", model: "deepseek-v4.1-flash" },
@@ -218,9 +229,10 @@ const CONFIG = {
     { provider: "amd", model: "MiMo-V2.6-Flash" }
   ],
 
+  // 🖼️ 多模态视觉池 (multimodal / 带图请求自动升轨)
   MULTIMODAL_CANDIDATES: [
-    { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
     { provider: "antling", model: "Ling-3.0-flash-VL" },
+    { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
     { provider: "discovery", model: "deepseek-v4-flash-vision" },
     { provider: "eaglesine", model: "gemma-4-31b" },
     { provider: "amd", model: "DeepSeek-V4-Flash-Vision-Exp" },
@@ -229,6 +241,7 @@ const CONFIG = {
     { provider: "openrouter", model: "stealth/space-bunny-alpha" }
   ],
 
+  // 🎨 文生图池 (images 端点与画图请求自适应)
   IMAGE_GEN_CANDIDATES: [
     { provider: "sensenova", model: "sensenova-u1.5-lite" },
     { provider: "sensenova", model: "sensenova-u1-fast" }
@@ -641,19 +654,213 @@ async function recordChannelSuccess(env, provider, model) {
   }
 }
 
-// 嗅探请求中是否包含图片输入
+// 嗅探请求中是否包含图片输入 (支持 OpenAI image_url, Anthropic image block, 内嵌 base64 数据 URI)
 function containsImageInput(messages) {
   if (!Array.isArray(messages)) return false;
   for (const m of messages) {
+    if (!m) continue;
+    if (Array.isArray(m.images) && m.images.length > 0) return true;
     if (Array.isArray(m.content)) {
       for (const part of m.content) {
-        if (part.type === "image_url" || part.type === "image" || part.image_url) {
+        if (!part) continue;
+        if (part.type === "image_url" || part.type === "image" || part.image_url || part.source?.type === "base64") {
           return true;
         }
+      }
+    } else if (typeof m.content === "string") {
+      if (m.content.includes("data:image/") && m.content.includes(";base64,")) {
+        return true;
       }
     }
   }
   return false;
+}
+
+function uint8ArrayToBase64(bytes) {
+  let binary = "";
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+  }
+  return btoa(binary);
+}
+
+// 自动将 HTTP 图片 URL 转换为 Base64 Data URI，解决部分上游模型 (如 Ant-Ling / Ling-3.0-flash-VL) 不支持直接读取外部 URL 的问题
+async function ensureImagesAsBase64(messages) {
+  if (!Array.isArray(messages)) return messages;
+  const newMessages = [];
+  for (const m of messages) {
+    if (!m || !Array.isArray(m.content)) {
+      newMessages.push(m);
+      continue;
+    }
+    const newContent = [];
+    for (const part of m.content) {
+      if (part && (part.type === "image_url" || part.image_url)) {
+        const urlObj = part.image_url || {};
+        const urlStr = typeof urlObj === "string" ? urlObj : (urlObj.url || "");
+        if (urlStr.startsWith("http://") || urlStr.startsWith("https://")) {
+          try {
+            const imgResp = await fetch(urlStr);
+            if (imgResp.ok) {
+              const mime = imgResp.headers.get("content-type") || "image/jpeg";
+              const buffer = await imgResp.arrayBuffer();
+              const b64 = uint8ArrayToBase64(new Uint8Array(buffer));
+              newContent.push({
+                type: "image_url",
+                image_url: { url: `data:${mime};base64,${b64}` }
+              });
+              continue;
+            }
+          } catch (e) {
+            console.warn("ensureImagesAsBase64 fetch error:", e);
+          }
+        }
+      }
+      newContent.push(part);
+    }
+    newMessages.push({ ...m, content: newContent });
+  }
+  return newMessages;
+}
+
+// 嗅探是否为文生图意图 (显式模型名或显式画图指令)
+function isImageGenerationIntent(targetModel, messages) {
+  const modelLower = (targetModel || "").toLowerCase();
+  const explicitImageModels = [
+    "image", "draw", "dall-e", "dall-e-2", "dall-e-3",
+    "sensenova-u1.5-lite", "sensenova-u1-fast", "u1.5-lite", "u1-fast", "sd", "flux"
+  ];
+  if (explicitImageModels.some(m => modelLower === m || modelLower.includes("u1.5-lite") || modelLower.includes("u1-fast"))) {
+    return true;
+  }
+  if (Array.isArray(messages) && messages.length > 0) {
+    const lastUser = [...messages].reverse().find(m => m.role === "user");
+    if (lastUser) {
+      const text = typeof lastUser.content === "string" ? lastUser.content.trim() : "";
+      if (/^\/(?:image|draw|img)\b/i.test(text)) return true;
+      if (/^(?:画图|生成图片|文生图|画一张图|生成一张图)[:：\s]/i.test(text)) return true;
+    }
+  }
+  return false;
+}
+
+// 提取文生图提示词
+function extractImagePrompt(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return "A beautiful scene";
+  const lastUser = [...messages].reverse().find(m => m.role === "user");
+  if (!lastUser) return "A beautiful scene";
+  let text = typeof lastUser.content === "string" ? lastUser.content.trim() : "";
+  text = text.replace(/^\/(?:image|draw|img)\s+/i, "")
+             .replace(/^(?:画图|生成图片|文生图|画一张图|生成一张图)[:：\s]+/i, "")
+             .trim();
+  return text || "A beautiful scene";
+}
+
+// 在 Chat 端点自动无缝执行文生图并返回 Markdown 图片
+async function executeChatImageGeneration(env, runtimeCfg, prompt, originalModel, isStream, isAnthropicMessages) {
+  const providerInfo = CONFIG.PROVIDERS.sensenova;
+  const channelHealth = await getChannelHealth(env);
+  const imageCandidates = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, runtimeCfg.image_pool || CONFIG.IMAGE_GEN_CANDIDATES));
+  if (imageCandidates.length === 0) {
+    throw new Error("文生图模型暂时不可用，所有生图渠道均处于下架或熔断状态。");
+  }
+  const imageModel = imageCandidates[0].model;
+
+  const upstreamResponse = await fetch(`${providerInfo.baseUrl}/images/generations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`
+    },
+    body: JSON.stringify({
+      model: imageModel,
+      prompt
+    })
+  });
+
+  const resData = await upstreamResponse.json();
+  const imgUrl = resData?.data?.[0]?.url || resData?.data?.[0]?.b64_json;
+  if (!imgUrl) {
+    throw new Error(resData?.error?.message || "未能获取到生成的图片地址。");
+  }
+
+  const replyText = `🎨 已为您生成图片：\n\n![${prompt}](${imgUrl})\n\n[点击查看高清原图](${imgUrl})`;
+
+  if (isStream) {
+    const headers = new Headers();
+    headers.set("Content-Type", "text/event-stream");
+    headers.set("Cache-Control", "no-cache");
+    headers.set("Access-Control-Allow-Origin", "*");
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+
+    (async () => {
+      const msgId = "chatcmpl_img_" + Math.random().toString(36).slice(2, 11);
+      const chunk = {
+        id: msgId,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: originalModel,
+        choices: [{
+          index: 0,
+          delta: { role: "assistant", content: replyText },
+          finish_reason: null
+        }]
+      };
+      await writer.write(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+      const stopChunk = {
+        id: msgId,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: originalModel,
+        choices: [{
+          index: 0,
+          delta: {},
+          finish_reason: "stop"
+        }]
+      };
+      await writer.write(encoder.encode(`data: ${JSON.stringify(stopChunk)}\n\n`));
+      await writer.write(encoder.encode("data: [DONE]\n\n"));
+      await writer.close();
+    })();
+
+    return new Response(readable, { headers });
+  }
+
+  if (isAnthropicMessages) {
+    const anthropicResponse = {
+      id: "msg_img_" + Math.random().toString(36).slice(2, 11),
+      type: "message",
+      role: "assistant",
+      model: originalModel,
+      content: [{ type: "text", text: replyText }],
+      stop_reason: "end_turn",
+      stop_sequence: null,
+      usage: { input_tokens: 15, output_tokens: 45 }
+    };
+    return new Response(JSON.stringify(anthropicResponse), {
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+
+  const openaiResponse = {
+    id: "chatcmpl_img_" + Math.random().toString(36).slice(2, 11),
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model: originalModel,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: replyText },
+      finish_reason: "stop"
+    }],
+    usage: { prompt_tokens: 15, completion_tokens: 45, total_tokens: 60 }
+  };
+  return new Response(JSON.stringify(openaiResponse), {
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+  });
 }
 
 // 稳定字符串哈希算法
@@ -722,7 +929,7 @@ function getSessionFingerprint(body, headers, token, url) {
 async function getSessionPinnedCandidate(env, sessionKey, targetModel, pool) {
   if (!env.USAGE_KV || !sessionKey) return null;
   try {
-    const normTarget = (targetModel === "default" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+    const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
     const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
     const pin = await env.USAGE_KV.get(pinKey, { type: "json" });
     if (pin && pin.provider && pin.model) {
@@ -742,7 +949,7 @@ async function getSessionPinnedCandidate(env, sessionKey, targetModel, pool) {
 async function recordSessionPin(env, sessionKey, targetModel, provider, model) {
   if (!env.USAGE_KV || !sessionKey) return;
   try {
-    const normTarget = (targetModel === "default" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+    const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
     const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
     const pinData = {
       provider,
@@ -2458,9 +2665,10 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
         <tbody>${mgmtRows}</tbody>
       </table>
     </div>
-    ${poolManagerHtml("🧭 auto 路由池管理 (文本请求候选)", "auto_pool", "AUTO_CANDIDATES", "#bae6fd", "当前使用内置默认池，添加或移除成员后即转为自定义池")}
-    ${poolManagerHtml("🖼️ 多模态池管理 (带图请求候选)", "multimodal_pool", "MULTIMODAL_CANDIDATES", "#f9a8d4", "带图请求的 auto 会自动从本池挑选")}
-    ${poolManagerHtml("🎨 文生图池管理 (images 端点)", "image_pool", "IMAGE_GEN_CANDIDATES", "#fdba74", "经 /v1/images/generations 调用")}
+    ${poolManagerHtml("⚡ auto / fast 极速把关池 (低延迟长文本候选)", "auto_pool", "AUTO_CANDIDATES", "#bae6fd", "请求 model: auto 或 fast 时的候选池，建议放经过把关的极速 Flash 模型")}
+    ${poolManagerHtml("🌐 all 全量路由池管理 (全部对话模型候选)", "all_pool", "ALL_CANDIDATES", "#c7d2fe", "请求 model: all 时的候选池，包含平台所有可用对话模型")}
+    ${poolManagerHtml("🖼️ 多模态池管理 (带图请求与视觉候选)", "multimodal_pool", "MULTIMODAL_CANDIDATES", "#f9a8d4", "带图请求或请求 multimodal 会自动从本池挑选")}
+    ${poolManagerHtml("🎨 文生图池管理 (images 端点与画图请求)", "image_pool", "IMAGE_GEN_CANDIDATES", "#fdba74", "经 /v1/images/generations 或画图指令调用")}
     ` : ''}
 
     ${showTestPage ? `
@@ -3488,7 +3696,7 @@ export default {
       const registeredChannel = Object.entries(CONFIG.PROVIDERS).some(([pKey, pVal]) =>
         pKey === provider && pVal.models.some(m => m.toLowerCase() === String(model || "").toLowerCase())
       );
-      if (!["toggle_channel", "auto_pool_add", "auto_pool_remove", "auto_pool_reset", "reset_circuit", "multimodal_pool_add", "multimodal_pool_remove", "multimodal_pool_reset", "image_pool_add", "image_pool_remove", "image_pool_reset"].includes(action)) {
+      if (!["toggle_channel", "auto_pool_add", "auto_pool_remove", "auto_pool_reset", "all_pool_add", "all_pool_remove", "all_pool_reset", "reset_circuit", "multimodal_pool_add", "multimodal_pool_remove", "multimodal_pool_reset", "image_pool_add", "image_pool_remove", "image_pool_reset"].includes(action)) {
         return new Response(JSON.stringify({ error: { message: `Unknown action '${action}'.` } }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
       if (!action.endsWith("_reset") && action !== "reset_circuit" && !(provider && CONFIG.PROVIDERS[provider] && model && String(model).trim())) {
@@ -3504,6 +3712,9 @@ export default {
         auto_pool_add: ["auto_pool", "AUTO_CANDIDATES"],
         auto_pool_remove: ["auto_pool", "AUTO_CANDIDATES"],
         auto_pool_reset: ["auto_pool", "AUTO_CANDIDATES"],
+        all_pool_add: ["all_pool", "ALL_CANDIDATES"],
+        all_pool_remove: ["all_pool", "ALL_CANDIDATES"],
+        all_pool_reset: ["all_pool", "ALL_CANDIDATES"],
         multimodal_pool_add: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
         multimodal_pool_remove: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
         multimodal_pool_reset: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
@@ -3539,12 +3750,12 @@ export default {
         await env.USAGE_KV.put("channel_health", JSON.stringify(health));
       }
 
-      await env.USAGE_KV.put("runtime_config", JSON.stringify({ disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }));
+      await env.USAGE_KV.put("runtime_config", JSON.stringify({ disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }));
       RUNTIME_CFG_TS = 0;
       RUNTIME_CFG_CACHE = null;
 
       if (contentType.includes("application/json")) {
-        return new Response(JSON.stringify({ ok: true, action, disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }), {
+        return new Response(JSON.stringify({ ok: true, action, disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }), {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
@@ -3720,7 +3931,7 @@ export default {
       }
 
       const allModels = [
-        "auto", "default", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
+        "auto", "fast", "all", "default", "multimodal", "image", "Ling-3.0-flash", "Ling-3.0-flash-VL", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "deepseek-v4-flash-0731", "deepseek-v4-flash-vision", "deepseek-v4-pro-0813",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.3", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
@@ -3770,20 +3981,7 @@ export default {
         const channelHealth = await getChannelHealth(env);
         const originalModel = body.model || "auto";
         let targetModel = originalModel;
-
-        // 图片生成模型误调用聊天补全端点时的拦截
-        if (targetModel.includes("u1.5-lite") || targetModel.includes("u1-fast")) {
-          return new Response(JSON.stringify({
-            error: {
-              message: `模型 '${targetModel}' 为文生图模型，请调用 /v1/images/generations 端点，而非对话补全端点。`,
-              type: "invalid_request_error",
-              code: "invalid_model_endpoint"
-            }
-          }), {
-            status: 400,
-            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-          });
-        }
+        const isStream = Boolean(body.stream);
 
         // 语音转文字模型误调用聊天补全端点时的拦截
         if (targetModel.toLowerCase().includes("whisper")) {
@@ -3799,18 +3997,43 @@ export default {
           });
         }
 
+        // 🎨 文生图自适应：如果是生图模型或明确画图指令，无缝在 Chat 端点执行文生图并返回 Markdown 图片
+        if (isImageGenerationIntent(targetModel, body.messages)) {
+          const prompt = extractImagePrompt(body.messages);
+          return await executeChatImageGeneration(env, runtimeCfg, prompt, originalModel, isStream, isAnthropicMessages);
+        }
+
+        // 🖼️ 识图多模态自适应：嗅探请求中是否含有图片数据
         const hasImage = containsImageInput(body.messages);
-        const isAuto = (targetModel === "auto" || targetModel === "default" || targetModel === "multimodal");
+        const multimodalModelSet = new Set(CONFIG.MULTIMODAL_CANDIDATES.map(c => c.model.toLowerCase()));
+        const isTargetAlreadyMultimodal = multimodalModelSet.has(targetModel.toLowerCase());
+
+        // 如果包含图片，且用户未显式指定某个多模态模型，则全自动升轨至多模态视觉池！
+        if (hasImage && !isTargetAlreadyMultimodal) {
+          targetModel = "multimodal";
+        }
+
+        const isFastPool = (targetModel === "fast" || targetModel === "auto" || targetModel === "default");
+        const isAllPool = (targetModel === "all");
+        const isMultimodalPool = (targetModel === "multimodal");
+        const isAuto = isFastPool || isAllPool || isMultimodalPool;
 
         const sessionKey = getSessionKey(body, request.headers, token, url);
         let candidates = [];
         if (isAuto) {
-          const rawPool = hasImage || targetModel === "multimodal" ? (runtimeCfg.multimodal_pool || CONFIG.MULTIMODAL_CANDIDATES) : (runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES);
+          let rawPool;
+          if (isMultimodalPool || hasImage) {
+            rawPool = runtimeCfg.multimodal_pool || CONFIG.MULTIMODAL_CANDIDATES;
+          } else if (isAllPool) {
+            rawPool = runtimeCfg.all_pool || CONFIG.ALL_CANDIDATES;
+          } else {
+            rawPool = runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES;
+          }
           const basePool = rawPool.filter(c => !AUTO_EXCLUDED_MODELS.has(c.model.toLowerCase()) && c.provider !== "cloudflare");
           const pool = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, basePool));
           if (pool.length === 0) {
             return new Response(JSON.stringify({
-              error: { message: "All models in the routing pool are currently disabled.", type: "server_error", code: "pool_empty" }
+              error: { message: "All models in the selected routing pool are currently disabled.", type: "server_error", code: "pool_empty" }
             }), { status: 503, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
           }
 
@@ -3877,10 +4100,10 @@ export default {
           messages.push({ role: "system", content: normalizeContent(body.system) });
         }
         if (Array.isArray(body.messages)) {
-          messages = messages.concat(convertMessagesToOpenAI(body.messages, hasImage));
+          const rawMsgs = hasImage ? await ensureImagesAsBase64(body.messages) : body.messages;
+          messages = messages.concat(convertMessagesToOpenAI(rawMsgs, hasImage));
         }
 
-        const isStream = Boolean(body.stream);
         let lastError = null;
 
         for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
