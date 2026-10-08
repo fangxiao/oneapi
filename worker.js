@@ -666,25 +666,93 @@ function stringHash(str) {
   return Math.abs(hash);
 }
 
-// 会话指纹提取算法
-function getSessionFingerprint(body, headers) {
-  const explicitId = body.session_id || body.conversation_id || body.chat_id || headers.get("x-session-id") || headers.get("session-id");
-  if (explicitId) {
-    return stringHash(String(explicitId));
+// 提取唯一且稳定的会话 Key (加固会话指纹)
+function getSessionKey(body, headers, token, url) {
+  // 1. 显式 ID (Header, Body, URL query)
+  const explicitId =
+    (body && (body.session_id || body.conversation_id || body.chat_id)) ||
+    (headers && (headers.get("x-session-id") || headers.get("session-id") || headers.get("x-conversation-id"))) ||
+    (url && (url.searchParams.get("session_id") || url.searchParams.get("conversation_id")));
+  if (explicitId && String(explicitId).trim().length > 0) {
+    return "exp_" + String(explicitId).trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80);
   }
 
-  const messages = body.messages || [];
+  // 2. 深入嗅探 WorkBuddy / Claude Code / Cursor / Agent 注入在系统提示词或上下文中的 sessionId / workspace
+  const messages = (body && body.messages) || [];
   if (Array.isArray(messages) && messages.length > 0) {
+    for (const m of messages) {
+      const contentStr = typeof m.content === "string" ? m.content : JSON.stringify(m.content || "");
+      const match = contentStr.match(/(?:sessionId|session_id|conversationId|conversation_id)["':\s=]+([a-zA-Z0-9_-]{8,64})/i);
+      if (match && match[1]) {
+        return "sniff_" + match[1];
+      }
+      const dirMatch = contentStr.match(/\/(?:WorkBuddy|projects|workspace|claude|openclaw)\/([a-zA-Z0-9_-]{8,64})/i);
+      if (dirMatch && dirMatch[1]) {
+        return "dir_" + dirMatch[1];
+      }
+    }
+
+    // 3. 提取首条 user 消息作为对话根指纹 (过滤动态时间戳，提取纯净语义前缀)
     const firstUserMsg = messages.find(m => m.role === "user");
     if (firstUserMsg) {
       const text = normalizeContent(firstUserMsg.content);
       if (text && text.trim().length > 0) {
-        return stringHash(text.trim());
+        const queryMatch = text.match(/<user_query>([\s\S]*?)<\/user_query>/i);
+        const coreText = queryMatch ? queryMatch[1] : text;
+        const cleaned = coreText
+          .replace(/\b\d{4}[-/]\d{2}[-/]\d{2}\b/g, "")
+          .replace(/\b\d{2}:\d{2}:\d{2}\b/g, "")
+          .trim();
+        return "msg_" + stringHash((token || "anon") + ":" + cleaned.slice(0, 300));
       }
     }
   }
 
-  return Math.floor(Math.random() * 1000000);
+  // 4. 稳定兜底指纹：按用户 Token + 当天日期，绝对禁止 Math.random() 产生随机漂移
+  const today = new Date().toISOString().slice(0, 10);
+  return "usr_" + stringHash((token || "anon") + ":" + today);
+}
+
+// 稳定字符串会话哈希
+function getSessionFingerprint(body, headers, token, url) {
+  return stringHash(getSessionKey(body, headers, token, url));
+}
+
+// 获取会话绑定的模型（KV 状态化）
+async function getSessionPinnedCandidate(env, sessionKey, targetModel, pool) {
+  if (!env.USAGE_KV || !sessionKey) return null;
+  try {
+    const normTarget = (targetModel === "default" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+    const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
+    const pin = await env.USAGE_KV.get(pinKey, { type: "json" });
+    if (pin && pin.provider && pin.model) {
+      const matched = pool.find(c =>
+        c.provider.toLowerCase() === pin.provider.toLowerCase() &&
+        c.model.toLowerCase() === pin.model.toLowerCase()
+      );
+      if (matched) return matched;
+    }
+  } catch (e) {
+    console.warn("getSessionPinnedCandidate error:", e);
+  }
+  return null;
+}
+
+// 记录会话锁定的模型（异步，0 延迟阻断）
+async function recordSessionPin(env, sessionKey, targetModel, provider, model) {
+  if (!env.USAGE_KV || !sessionKey) return;
+  try {
+    const normTarget = (targetModel === "default" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+    const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
+    const pinData = {
+      provider,
+      model,
+      pinned_at: Date.now()
+    };
+    await env.USAGE_KV.put(pinKey, JSON.stringify(pinData), { expirationTtl: 14400 });
+  } catch (e) {
+    console.error("recordSessionPin error:", e);
+  }
 }
 
 function normalizeContent(content) {
@@ -3734,6 +3802,7 @@ export default {
         const hasImage = containsImageInput(body.messages);
         const isAuto = (targetModel === "auto" || targetModel === "default" || targetModel === "multimodal");
 
+        const sessionKey = getSessionKey(body, request.headers, token, url);
         let candidates = [];
         if (isAuto) {
           const rawPool = hasImage || targetModel === "multimodal" ? (runtimeCfg.multimodal_pool || CONFIG.MULTIMODAL_CANDIDATES) : (runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES);
@@ -3744,19 +3813,20 @@ export default {
               error: { message: "All models in the routing pool are currently disabled.", type: "server_error", code: "pool_empty" }
             }), { status: 503, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
           }
-          const primaryPool = pool.filter(c => c.provider !== "amd");
-          const standbyPool = pool.filter(c => c.provider === "amd");
-          if (primaryPool.length > 0) {
-            const sessionHash = getSessionFingerprint(body, request.headers);
-            const stickyIdx = sessionHash % primaryPool.length;
-            const primaryCandidate = primaryPool[stickyIdx];
+
+          // 方案 A + 方案 C：基于 KV 的会话锁定 + 加固会话指纹
+          const pinnedCandidate = await getSessionPinnedCandidate(env, sessionKey, targetModel, pool);
+          if (pinnedCandidate) {
+            // 已锁定会话：固定使用该模型作为绝对首选（100% 会话粘性与 KV Cache 命中），其余作为灾备降级
             candidates = [
-              primaryCandidate,
-              ...primaryPool.filter((_, idx) => idx !== stickyIdx),
-              ...standbyPool
+              pinnedCandidate,
+              ...pool.filter(c => !(c.provider === pinnedCandidate.provider && c.model.toLowerCase() === pinnedCandidate.model.toLowerCase()))
             ];
           } else {
-            candidates = standbyPool;
+            // 未锁定（新会话首轮）：按优先级顺序排列（首发钉子户 Ling-3.0-flash / glm-5.3-flash 居首）
+            const primaryPool = pool.filter(c => c.provider !== "amd");
+            const standbyPool = pool.filter(c => c.provider === "amd");
+            candidates = primaryPool.length > 0 ? [...primaryPool, ...standbyPool] : standbyPool;
           }
         } else {
           // 严禁跨模型切换：用户显式指定具体模型时，仅在支持该具体模型的 Provider 之间做同模型故障转移，绝不切换为其他模型！
@@ -3778,12 +3848,14 @@ export default {
             // 未在已知提供商列表显式声明的未知模型，尝试透传至主 Provider (eaglesine)，不塞入任何其他无关模型
             candidates = [{ provider: "eaglesine", model: targetModel }];
           } else if (candidates.length > 1) {
-            const sessionHash = getSessionFingerprint(body, request.headers);
-            const startIdx = sessionHash % candidates.length;
-            candidates = [
-              candidates[startIdx],
-              ...candidates.filter((_, idx) => idx !== startIdx)
-            ];
+            // 多提供商同模型粘性锁定
+            const pinnedCandidate = await getSessionPinnedCandidate(env, sessionKey, targetModel, candidates);
+            if (pinnedCandidate) {
+              candidates = [
+                pinnedCandidate,
+                ...candidates.filter(c => !(c.provider === pinnedCandidate.provider && c.model.toLowerCase() === pinnedCandidate.model.toLowerCase()))
+              ];
+            }
           }
         }
 
@@ -3915,6 +3987,8 @@ export default {
               headers.set("Cache-Control", "no-cache");
               headers.set("Connection", "keep-alive");
               headers.set("Access-Control-Allow-Origin", "*");
+              if (sessionKey) headers.set("X-Session-Key", sessionKey);
+              headers.set("X-Routed-Model", candidate.model);
 
               const { readable, writable } = new TransformStream();
               const writer = writable.getWriter();
@@ -4049,6 +4123,9 @@ export default {
                 const reasoningTokens = finalUsage?.completion_tokens_details?.reasoning_tokens || 0;
 
                 ctx.waitUntil(recordChannelSuccess(env, candidate.provider, candidate.model));
+                if (sessionKey) {
+                  ctx.waitUntil(recordSessionPin(env, sessionKey, targetModel, candidate.provider, candidate.model));
+                }
                 await recordUsage(env, {
                   user: userName,
                   model: originalModel,
@@ -4089,6 +4166,9 @@ export default {
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
 
             ctx.waitUntil(recordChannelSuccess(env, candidate.provider, candidate.model));
+            if (sessionKey) {
+              ctx.waitUntil(recordSessionPin(env, sessionKey, targetModel, candidate.provider, candidate.model));
+            }
             ctx.waitUntil(recordUsage(env, {
               user: userName,
               model: originalModel,
@@ -4103,8 +4183,14 @@ export default {
             }));
 
             if (!isAnthropicMessages) {
+              const respHeaders = {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": "*",
+                "X-Routed-Model": candidate.model
+              };
+              if (sessionKey) respHeaders["X-Session-Key"] = sessionKey;
               return new Response(JSON.stringify(openaiData), {
-                headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+                headers: respHeaders
               });
             }
 
@@ -4155,8 +4241,14 @@ export default {
               }
             };
 
+            const anthropicHeaders = {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+              "X-Routed-Model": candidate.model
+            };
+            if (sessionKey) anthropicHeaders["X-Session-Key"] = sessionKey;
             return new Response(JSON.stringify(anthropicResponse), {
-              headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+              headers: anthropicHeaders
             });
           } catch (err) {
             if (bodyTimer) clearTimeout(bodyTimer);
