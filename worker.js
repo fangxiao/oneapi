@@ -1425,28 +1425,39 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
   const todayStr = getBeijingDateStr();
   let startStr = todayStr;
   let endStr = todayStr;
-  let rangeLabel = "今日";
+  let rangeLabel = "今天";
 
-  if (rangeType === "7d") {
+  const normRange = (rangeType || "today").toLowerCase();
+  if (normRange === "yesterday" || normRange === "昨天") {
+    const d = new Date(Date.now() + 8 * 3600 * 1000);
+    d.setUTCDate(d.getUTCDate() - 1);
+    startStr = d.toISOString().slice(0, 10);
+    endStr = startStr;
+    rangeLabel = "昨天";
+  } else if (normRange === "today" || normRange === "今天") {
+    startStr = todayStr;
+    endStr = todayStr;
+    rangeLabel = "今天";
+  } else if (normRange === "7d") {
     const d = new Date(Date.now() + 8 * 3600 * 1000);
     d.setUTCDate(d.getUTCDate() - 6);
     startStr = d.toISOString().slice(0, 10);
     rangeLabel = "近 7 天 (近一周)";
-  } else if (rangeType === "30d") {
+  } else if (normRange === "30d") {
     const d = new Date(Date.now() + 8 * 3600 * 1000);
     d.setUTCDate(d.getUTCDate() - 29);
     startStr = d.toISOString().slice(0, 10);
     rangeLabel = "近 30 天 (近一月)";
-  } else if (rangeType === "custom" && customStart && customEnd) {
+  } else if (normRange === "custom" && customStart && customEnd) {
     startStr = customStart;
     endStr = customEnd;
     rangeLabel = `自定义范围 (${customStart} ~ ${customEnd})`;
-  } else if (rangeType === "all") {
+  } else if (normRange === "all") {
     rangeLabel = "历史全部累计";
   }
 
   let aggregated = {
-    range: rangeType || "today",
+    range: (normRange === "yesterday" || normRange === "昨天") ? "yesterday" : (normRange === "today" || normRange === "今天") ? "today" : (rangeType || "today"),
     range_label: rangeLabel,
     start_date: startStr,
     end_date: endStr,
@@ -2892,7 +2903,8 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
     <!-- 时间段切换栏 -->
     <div class="filter-bar">
       <div class="tabs">
-        <a href="/usage?page=${page}&range=today" class="tab-btn ${currentRange === 'today' ? 'active' : ''}">今日</a>
+        <a href="/usage?page=${page}&range=today" class="tab-btn ${currentRange === 'today' ? 'active' : ''}">今天</a>
+        <a href="/usage?page=${page}&range=yesterday" class="tab-btn ${currentRange === 'yesterday' ? 'active' : ''}">昨天</a>
         <a href="/usage?page=${page}&range=7d" class="tab-btn ${currentRange === '7d' ? 'active' : ''}">近 7 天</a>
         <a href="/usage?page=${page}&range=30d" class="tab-btn ${currentRange === '30d' ? 'active' : ''}">近 30 天</a>
         <a href="/usage?page=${page}&range=all" class="tab-btn ${currentRange === 'all' ? 'active' : ''}">历史全部</a>
@@ -2991,7 +3003,8 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
           <span style="font-size: 13px; color: #64748b; font-weight: normal;">统计时段: ${stats.range_label}</span>
         </div>
         <div class="tabs" style="display:inline-flex; gap:6px;">
-          <a href="/usage?page=${page}&range=today" class="tab-btn ${currentRange === 'today' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">今日</a>
+          <a href="/usage?page=${page}&range=today" class="tab-btn ${currentRange === 'today' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">今天</a>
+          <a href="/usage?page=${page}&range=yesterday" class="tab-btn ${currentRange === 'yesterday' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">昨天</a>
           <a href="/usage?page=${page}&range=7d" class="tab-btn ${currentRange === '7d' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">近 7 天</a>
           <a href="/usage?page=${page}&range=30d" class="tab-btn ${currentRange === '30d' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">近 30 天</a>
           <a href="/usage?page=${page}&range=all" class="tab-btn ${currentRange === 'all' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">历史全部</a>
@@ -3030,40 +3043,7 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
     </div>
     ` : ''}
 
-    <!-- 概览页: 供应商消耗摘要 -->
-    ${showOverview && stats && stats.providers && Object.keys(stats.providers).length > 0 ? `
-    <div class="section">
-      <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span>🏢 各供应商 Token 消耗概览 (Provider Consumption)</span>
-          <span style="font-size: 13px; color: #64748b; font-weight: normal;">统计时段: ${stats.range_label}</span>
-        </div>
-        <div class="tabs" style="display:inline-flex; gap:6px;">
-          <a href="/usage?page=${page}&range=today" class="tab-btn ${currentRange === 'today' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">今日</a>
-          <a href="/usage?page=${page}&range=7d" class="tab-btn ${currentRange === '7d' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">近 7 天</a>
-          <a href="/usage?page=${page}&range=30d" class="tab-btn ${currentRange === '30d' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">近 30 天</a>
-          <a href="/usage?page=${page}&range=all" class="tab-btn ${currentRange === 'all' ? 'active' : ''}" style="padding:4px 10px; font-size:12px;">历史全部</a>
-        </div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>供应商 (Provider)</th>
-            <th style="text-align: right;">调用次数</th>
-            <th style="text-align: right;">总消耗 Tokens</th>
-            <th style="text-align: right;">Prompt 输入</th>
-            <th style="text-align: right;">Completion 输出</th>
-            <th style="text-align: right;">命中缓存 (Cache)</th>
-            <th style="text-align: right;">参考金额</th>
-            <th style="text-align: right;">消耗占比</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${providerRows}
-        </tbody>
-      </table>
-    </div>
-    ` : ''}
+
 
     ${showUsagePage ? `
     <!-- 4. 模型分布 -->
