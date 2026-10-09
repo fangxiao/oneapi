@@ -88,7 +88,6 @@ const CONFIG = {
     bai: "b.ai",
     volces: "火山引擎 (Volcengine/Ark)",
     amd: "AMD 开发者云",
-    opencode: "OpenCode",
     internai: "上海人工智能实验室 (InternAI)",
     discovery: "上海人工智能实验室 (InternAI Discovery)",
     openrouter: "OpenRouter (Free)",
@@ -110,11 +109,6 @@ const CONFIG = {
       baseUrl: "https://api.b.ai/v1",
       apiKey: "",
       models: ["glm-5.2", "grok-4.6", "grok-4.5"]
-    },
-    opencode: {
-      baseUrl: "https://opencode.ai/zen/v1",
-      apiKey: "",
-      models: ["nemotron-3.5-lightning-free", "muse-spark-1.2-contributor-free", "nemotron-3-ultra-free", "ling-3.0-flash-fin-free", "big-pickle"]
     },
     amd: {
       baseUrl: "https://developer.amd.com.cn/radeon/api/v1",
@@ -273,12 +267,7 @@ const AUTO_EXCLUDED_MODELS = new Set([
   "google/gemma-4-31b-it:free",
   "nvidia/nemotron-3.5-lightning:free",
   "thinkingmachines/inkling:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "nemotron-3.5-lightning-free",
-  "muse-spark-1.2-contributor-free",
-  "nemotron-3-ultra-free",
-  "ling-3.0-flash-fin-free",
-  "big-pickle"
+  "nvidia/nemotron-3-ultra-550b-a55b:free"
 ]);
 
 const CF_MODEL_MAP = {
@@ -402,7 +391,6 @@ const PROVIDER_SECRET_NAMES = {
   sensenova: "SENSENOVA_API_KEY",
   eaglesine: "EAGLESINE_API_KEY",
   bai: "BAI_API_KEY",
-  opencode: "OPENCODE_API_KEY",
   amd: "AMD_API_KEY",
   volces: "VOLCES_API_KEY",
   internai: "INTERNAI_API_KEY",
@@ -1317,9 +1305,6 @@ function deriveProvidersFromModels(models) {
     "qwen3.8-flash-next": "amd",
     "minicpm5-2b": "amd",
     "mimo-v2.6-flash": "amd",
-    "meta/muse-spark-1.3-contributor": "opencode",
-    "poolside/laguna-s-2.1": "opencode",
-    "upstage/solar-pro4": "opencode",
     "intern-latest": "internai",
     "intern-s2": "internai",
     "intern-s1-pro": "internai",
