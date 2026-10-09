@@ -3959,7 +3959,8 @@ export default {
         const body = await request.json();
         const userName = resolveUser(token, body, request.headers, env, apiKeys);
         const channelHealth = await getChannelHealth(env);
-        const originalModel = body.model || "auto";
+        const rawModel = body.model || "auto";
+        const originalModel = rawModel.replace(/^(?:custom-local:|custom:)/i, "");
         let targetModel = originalModel;
         const isStream = Boolean(body.stream);
 
@@ -4087,6 +4088,12 @@ export default {
         let lastError = null;
 
         for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
+          if (request.signal?.aborted) {
+            break;
+          }
+          if (Date.now() - startTime > 110000) {
+            break;
+          }
           const candidate = candidates[cIdx];
           const isLastCandidate = cIdx === candidates.length - 1;
           const providerInfo = CONFIG.PROVIDERS[candidate.provider];
@@ -4165,9 +4172,20 @@ export default {
               }
 
               const isFlashModel = /flash|lite|fast/i.test(candidate.model);
-              const connectTimeoutMs = isStream ? (isFlashModel ? 18000 : 35000) : (isFlashModel ? 25000 : 45000);
+              const estPromptTokens = estimateTokens(messages.map(m => typeof m.content === "string" ? m.content : JSON.stringify(m.content || "")).join(" "));
+              let baseTimeoutMs = isFlashModel ? 30000 : 50000;
+              if (estPromptTokens > 40000) {
+                baseTimeoutMs = isFlashModel ? 75000 : 90000;
+              } else if (estPromptTokens > 15000) {
+                baseTimeoutMs = isFlashModel ? 45000 : 65000;
+              }
+              const connectTimeoutMs = isStream ? baseTimeoutMs : (baseTimeoutMs + 15000);
               const upstreamController = new AbortController();
               const startTimer = setTimeout(() => upstreamController.abort(), connectTimeoutMs);
+              const onClientAbort = () => upstreamController.abort();
+              if (request.signal) {
+                request.signal.addEventListener("abort", onClientAbort, { once: true });
+              }
               const apiKey = getProviderApiKey(providerInfo);
               const upstreamHeaders = {
                 "Content-Type": "application/json",
@@ -4184,6 +4202,9 @@ export default {
                 signal: upstreamController.signal
               });
               clearTimeout(startTimer);
+              if (request.signal) {
+                request.signal.removeEventListener("abort", onClientAbort);
+              }
               if (!isStream) bodyTimer = setTimeout(() => upstreamController.abort(), connectTimeoutMs);
 
               if (!upstreamResponse.ok) {
