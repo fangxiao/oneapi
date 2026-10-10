@@ -3559,6 +3559,27 @@ export default {
     const masterKey = env.MASTER_KEY || CONFIG.MASTER_KEY;
     const runtimeCfg = await getRuntimeConfig(env);
 
+    // -2. 公开健康检查 / 探活端点 (免鉴权，供自动化监控与平台调度器探活)
+    const isProbePath = (cleanPath === "/health" || cleanPath === "/ping" || cleanPath === "/v1/health" || cleanPath === "/v1/ping");
+    const isRootProbe = cleanPath === "/" && !token;
+    if (isProbePath || isRootProbe) {
+      if (request.headers.get("accept")?.includes("text/html") && cleanPath === "/") {
+        return Response.redirect(new URL("/docs", request.url), 302);
+      }
+      return new Response(JSON.stringify({
+        status: "ok",
+        service: "Free LLM Gateway on Cloudflare Worker",
+        timestamp: Date.now()
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "no-cache"
+        }
+      });
+    }
+
     // -1. 公开接入文档页
     if (cleanPath === "/docs") {
       const docsCfg = runtimeCfg;
