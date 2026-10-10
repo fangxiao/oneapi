@@ -103,6 +103,11 @@ const CONFIG = {
   },
 
   PROVIDERS: {
+    volces: {
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+      apiKey: "",
+      models: ["glm-5.3-flash", "deepseek-v4-flash", "deepseek-v4.1-flash"]
+    },
     sensenova: {
       baseUrl: "https://token.sensenova.cn/v1",
       apiKey: "",
@@ -122,11 +127,6 @@ const CONFIG = {
       baseUrl: "https://developer.amd.com.cn/radeon/api/v1",
       apiKey: "",
       models: ["DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4-Flash", "DeepSeek-V4.1-Flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B", "MiMo-V2.6-Flash"]
-    },
-    volces: {
-      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
-      apiKey: "",
-      models: ["glm-5.3-flash", "deepseek-v4-flash", "deepseek-v4.1-flash"]
     },
     internai: {
       baseUrl: "https://chat.intern-ai.org.cn/api/v1",
@@ -1391,7 +1391,7 @@ function deriveProvidersFromModels(models) {
     "grok-4.6": "bai",
     "grok-4.5": "bai",
     "deepseek-v4-flash-vision-exp": "amd",
-    "deepseek-v4.1-flash": "amd",
+    "deepseek-v4.1-flash": "volces",
     "qwen3.8-flash-next": "amd",
     "minicpm5-2b": "amd",
     "mimo-v2.6-flash": "amd",
@@ -4055,7 +4055,14 @@ export default {
         const userName = resolveUser(token, body, request.headers, env, apiKeys);
         const channelHealth = await getChannelHealth(env);
         const rawModel = body.model || "auto";
-        const originalModel = rawModel.replace(/^(?:custom-local:|custom:)/i, "");
+        let cleanModel = rawModel.replace(/^(?:custom-local:|custom:)/i, "");
+        let explicitProvider = null;
+        const prefixMatch = cleanModel.match(/^([a-zA-Z0-9_-]+)[:/](.+)$/);
+        if (prefixMatch && CONFIG.PROVIDERS[prefixMatch[1].toLowerCase()]) {
+          explicitProvider = prefixMatch[1].toLowerCase();
+          cleanModel = prefixMatch[2];
+        }
+        const originalModel = cleanModel;
         let targetModel = originalModel;
         const isStream = Boolean(body.stream);
 
@@ -4105,7 +4112,10 @@ export default {
           } else {
             rawPool = runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES;
           }
-          const basePool = rawPool.filter(c => !AUTO_EXCLUDED_MODELS.has(c.model.toLowerCase()) && c.provider !== "cloudflare");
+          let basePool = rawPool.filter(c => !AUTO_EXCLUDED_MODELS.has(c.model.toLowerCase()) && c.provider !== "cloudflare");
+          if (explicitProvider) {
+            basePool = basePool.filter(c => c.provider === explicitProvider);
+          }
           const pool = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, basePool));
           if (pool.length === 0) {
             return new Response(JSON.stringify({
@@ -4145,6 +4155,9 @@ export default {
           const targetLower = targetModel.toLowerCase();
           const registeredChannels = [];
           for (const [pKey, pVal] of Object.entries(CONFIG.PROVIDERS)) {
+            if (explicitProvider && pKey !== explicitProvider) {
+              continue;
+            }
             const matchedModel = pVal.models.find(m => m.toLowerCase() === targetLower);
             if (matchedModel) {
               registeredChannels.push({ provider: pKey, model: matchedModel });
@@ -4153,12 +4166,16 @@ export default {
           candidates = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, registeredChannels));
           if (candidates.length === 0 && registeredChannels.length > 0) {
             return new Response(JSON.stringify({
-              error: { message: `模型 '${originalModel}' 已下架，请改用其他模型。`, type: "invalid_request_error", code: "model_disabled" }
+              error: { message: `模型 '${rawModel}' 已下架，请改用其他模型。`, type: "invalid_request_error", code: "model_disabled" }
             }), { status: 403, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
           }
           if (candidates.length === 0) {
-            // 未在已知提供商列表显式声明的未知模型，尝试透传至主 Provider (eaglesine)，不塞入任何其他无关模型
-            candidates = [{ provider: "eaglesine", model: targetModel }];
+            if (explicitProvider) {
+              candidates = [{ provider: explicitProvider, model: targetModel }];
+            } else {
+              // 未在已知提供商列表显式声明的未知模型，尝试透传至主 Provider (eaglesine)，不塞入任何其他无关模型
+              candidates = [{ provider: "eaglesine", model: targetModel }];
+            }
           } else if (candidates.length > 1) {
             // 多提供商同模型粘性锁定
             const pinnedCandidate = await getSessionPinnedCandidate(env, sessionKey, targetModel, candidates);
@@ -4326,6 +4343,7 @@ export default {
               headers.set("Access-Control-Allow-Origin", "*");
               if (sessionKey) headers.set("X-Session-Key", sessionKey);
               headers.set("X-Routed-Model", candidate.model);
+              headers.set("X-Routed-Provider", candidate.provider);
 
               const { readable, writable } = new TransformStream();
               const writer = writable.getWriter();
@@ -4525,7 +4543,8 @@ export default {
               const respHeaders = {
                 "Content-Type": "application/json",
                 "Access-Control-Allow-Origin": "*",
-                "X-Routed-Model": candidate.model
+                "X-Routed-Model": candidate.model,
+                "X-Routed-Provider": candidate.provider
               };
               if (sessionKey) respHeaders["X-Session-Key"] = sessionKey;
               return new Response(JSON.stringify(openaiData), {
@@ -4583,7 +4602,8 @@ export default {
             const anthropicHeaders = {
               "Content-Type": "application/json",
               "Access-Control-Allow-Origin": "*",
-              "X-Routed-Model": candidate.model
+              "X-Routed-Model": candidate.model,
+              "X-Routed-Provider": candidate.provider
             };
             if (sessionKey) anthropicHeaders["X-Session-Key"] = sessionKey;
             return new Response(JSON.stringify(anthropicResponse), {
