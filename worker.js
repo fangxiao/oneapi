@@ -41,6 +41,12 @@ const CONFIG = {
       "Ling-2.6-flash": [0.5, 2],
       "Ling-3.0-tiny": [0.2, 0.8],
       "Ling-3.0-flash-VL": [0.5, 2],
+      "agnes-3.0-flash": [0.5, 2],
+      "agnes-2.5-flash": [0.5, 2],
+      "agnes-2.0-flash": [0.5, 2],
+      "agnes-3.0-flash-max": [1, 4],
+      "agnes-2.5-pro": [2, 8],
+      "agnes-image-2.5-flash": [1, 4],
       "hy3": [1, 4],
       "mimo-v2.5": [0.5, 2],
       "mimo-v2.6-flash": [0.5, 2],
@@ -91,7 +97,9 @@ const CONFIG = {
     internai: "上海人工智能实验室 (InternAI)",
     discovery: "上海人工智能实验室 (InternAI Discovery)",
     openrouter: "OpenRouter (Free)",
-    cloudflare: "Cloudflare Workers AI (10k Neurons/Day Free)"
+    cloudflare: "Cloudflare Workers AI (10k Neurons/Day Free)",
+    antling: "蚂蚁灵境 (Antling)",
+    agnes: "Agnes AI (ApiHub)"
   },
 
   PROVIDERS: {
@@ -183,6 +191,24 @@ const CONFIG = {
         "Ling-3.0-tiny",
         "Ling-3.0-flash-VL"
       ]
+    },
+    agnes: {
+      baseUrl: "https://apihub.agnes-ai.com/v1",
+      apiKey: "sk-wQwGpDqUQdvhr1VHEZoJtRozNqXi22hkvXIOk7OQJz30uEU8",
+      models: [
+        "agnes-3.0-flash",
+        "agnes-2.5-flash",
+        "agnes-2.0-flash",
+        "agnes-3.0-flash-max",
+        "agnes-2.5-pro",
+        "agnes-2.5-pro-beta",
+        "agnes-2.5-pro-alpha",
+        "agnes-image-2.5-flash",
+        "agnes-image-2.1-flash",
+        "agnes-image-2.0-flash",
+        "agnes-video-2.5-flash",
+        "agnes-video-2.5"
+      ]
     }
   },
 
@@ -193,12 +219,16 @@ const CONFIG = {
     { provider: "volces", model: "deepseek-v4.1-flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
-    { provider: "volces", model: "deepseek-v4-flash" }
+    { provider: "volces", model: "deepseek-v4-flash" },
+    { provider: "agnes", model: "agnes-3.0-flash" },
+    { provider: "agnes", model: "agnes-2.5-flash" }
   ],
 
   // 🌐 全量模型池 (all): 涵盖平台接入的所有可用对话模型 (大模型、Pro、专业模型全量分流)
   ALL_CANDIDATES: [
     { provider: "antling", model: "Ling-3.0-flash" },
+    { provider: "agnes", model: "agnes-3.0-flash" },
+    { provider: "agnes", model: "agnes-2.5-flash" },
     { provider: "volces", model: "glm-5.3-flash" },
     { provider: "volces", model: "deepseek-v4.1-flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
@@ -220,12 +250,16 @@ const CONFIG = {
     { provider: "discovery", model: "deepseek-v4-pro-0813" },
     { provider: "amd", model: "DeepSeek-V4.1-Flash" },
     { provider: "amd", model: "Qwen3.8-Flash-Next" },
-    { provider: "amd", model: "MiMo-V2.6-Flash" }
+    { provider: "amd", model: "MiMo-V2.6-Flash" },
+    { provider: "agnes", model: "agnes-2.0-flash" },
+    { provider: "agnes", model: "agnes-3.0-flash-max" },
+    { provider: "agnes", model: "agnes-2.5-pro" }
   ],
 
   // 🖼️ 多模态视觉池 (multimodal / 带图请求自动升轨)
   MULTIMODAL_CANDIDATES: [
     { provider: "antling", model: "Ling-3.0-flash-VL" },
+    { provider: "agnes", model: "agnes-3.0-flash" },
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
     { provider: "discovery", model: "deepseek-v4-flash-vision" },
     { provider: "eaglesine", model: "gemma-4-31b" },
@@ -237,8 +271,11 @@ const CONFIG = {
 
   // 🎨 文生图池 (images 端点与画图请求自适应)
   IMAGE_GEN_CANDIDATES: [
+    { provider: "agnes", model: "agnes-image-2.5-flash" },
     { provider: "sensenova", model: "sensenova-u1.5-lite" },
-    { provider: "sensenova", model: "sensenova-u1-fast" }
+    { provider: "sensenova", model: "sensenova-u1-fast" },
+    { provider: "agnes", model: "agnes-image-2.1-flash" },
+    { provider: "agnes", model: "agnes-image-2.0-flash" }
   ]
 };
 
@@ -396,7 +433,8 @@ const PROVIDER_SECRET_NAMES = {
   internai: "INTERNAI_API_KEY",
   discovery: "DISCOVERY_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
-  antling: "ANTLING_API_KEY"
+  antling: "ANTLING_API_KEY",
+  agnes: "AGNES_API_KEY"
 };
 
 function applyProviderSecrets(env) {
@@ -718,9 +756,10 @@ function isImageGenerationIntent(targetModel, messages) {
   const modelLower = (targetModel || "").toLowerCase();
   const explicitImageModels = [
     "image", "draw", "dall-e", "dall-e-2", "dall-e-3",
-    "sensenova-u1.5-lite", "sensenova-u1-fast", "u1.5-lite", "u1-fast", "sd", "flux"
+    "sensenova-u1.5-lite", "sensenova-u1-fast", "u1.5-lite", "u1-fast", "sd", "flux",
+    "agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash", "agnes-image"
   ];
-  if (explicitImageModels.some(m => modelLower === m || modelLower.includes("u1.5-lite") || modelLower.includes("u1-fast"))) {
+  if (explicitImageModels.some(m => modelLower === m || modelLower.includes("u1.5-lite") || modelLower.includes("u1-fast") || modelLower.includes("agnes-image"))) {
     return true;
   }
   if (Array.isArray(messages) && messages.length > 0) {
@@ -748,19 +787,22 @@ function extractImagePrompt(messages) {
 
 // 在 Chat 端点自动无缝执行文生图并返回 Markdown 图片
 async function executeChatImageGeneration(env, runtimeCfg, prompt, originalModel, isStream, isAnthropicMessages) {
-  const providerInfo = CONFIG.PROVIDERS.sensenova;
   const channelHealth = await getChannelHealth(env);
   const imageCandidates = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, runtimeCfg.image_pool || CONFIG.IMAGE_GEN_CANDIDATES));
   if (imageCandidates.length === 0) {
     throw new Error("文生图模型暂时不可用，所有生图渠道均处于下架或熔断状态。");
   }
-  const imageModel = imageCandidates[0].model;
+  const chosenImage = imageCandidates[0];
+  const providerInfo = CONFIG.PROVIDERS[chosenImage.provider] || CONFIG.PROVIDERS.sensenova;
+  const imageModel = chosenImage.model;
 
   const upstreamResponse = await fetch(`${providerInfo.baseUrl}/images/generations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`
+      "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`,
+      "User-Agent": "curl/8.7.1",
+      "Accept": "*/*"
     },
     body: JSON.stringify({
       model: imageModel,
@@ -1323,7 +1365,24 @@ function deriveProvidersFromModels(models) {
     "nvidia/nemotron-3-ultra-550b-a55b:free": "openrouter",
     "stealth/space-bunny-alpha": "openrouter",
     "space-bunny-alpha": "openrouter",
-    "space-bunny": "openrouter"
+    "space-bunny": "openrouter",
+    "ling-3.0-flash": "antling",
+    "ling-3.0-pro": "antling",
+    "ling-2.6-flash": "antling",
+    "ling-3.0-tiny": "antling",
+    "ling-3.0-flash-vl": "antling",
+    "agnes-3.0-flash": "agnes",
+    "agnes-2.5-flash": "agnes",
+    "agnes-2.0-flash": "agnes",
+    "agnes-3.0-flash-max": "agnes",
+    "agnes-2.5-pro": "agnes",
+    "agnes-2.5-pro-beta": "agnes",
+    "agnes-2.5-pro-alpha": "agnes",
+    "agnes-image-2.5-flash": "agnes",
+    "agnes-image-2.1-flash": "agnes",
+    "agnes-image-2.0-flash": "agnes",
+    "agnes-video-2.5-flash": "agnes",
+    "agnes-video-2.5": "agnes"
   };
   const autoShares = { volces: 0.35, eaglesine: 0.35, sensenova: 0.15, internai: 0.10, amd: 0.05 };
   const res = {};
@@ -3459,6 +3518,7 @@ export default {
       const listedModels = [
         "auto", "default", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "Ling-3.0-flash", "Ling-3.1-flash", "Ling-2.6-flash",
+        "agnes-3.0-flash", "agnes-2.5-flash", "agnes-image-2.5-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
@@ -3898,6 +3958,8 @@ export default {
       const allModels = [
         "auto", "fast", "all", "default", "multimodal", "image", "Ling-3.0-flash", "Ling-3.0-flash-VL", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "deepseek-v4-flash-0731", "deepseek-v4-flash-vision", "deepseek-v4-pro-0813",
+        "agnes-3.0-flash", "agnes-2.5-flash", "agnes-2.0-flash", "agnes-3.0-flash-max", "agnes-2.5-pro",
+        "agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.3", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
         "minimax-m3",
@@ -4174,7 +4236,9 @@ export default {
               const apiKey = getProviderApiKey(providerInfo);
               const upstreamHeaders = {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`
+                "Authorization": `Bearer ${apiKey}`,
+                "User-Agent": "curl/8.7.1",
+                "Accept": "*/*"
               };
               if (candidate.provider === "openrouter") {
                 upstreamHeaders["HTTP-Referer"] = "https://api.ailearning.top";
@@ -4194,7 +4258,10 @@ export default {
 
               if (!upstreamResponse.ok) {
                 if (bodyTimer) clearTimeout(bodyTimer);
-                lastError = await upstreamResponse.text();
+                const errText = await upstreamResponse.text();
+                const cfRay = upstreamResponse.headers.get("cf-ray") || "none";
+                const errStatus = upstreamResponse.status;
+                lastError = `[HTTP ${errStatus}, ray: ${cfRay}] ${errText}`;
                 ctx.waitUntil(recordChannelFailure(env, candidate.provider, candidate.model, lastError, userName, originalModel, Date.now() - startTime, isLastCandidate));
                 continue;
               }
@@ -4505,7 +4572,6 @@ export default {
       try {
         const body = await request.json();
         const prompt = body.prompt || "";
-        const providerInfo = CONFIG.PROVIDERS.sensenova;
         const channelHealth = await getChannelHealth(env);
         const imageCandidates = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, runtimeCfg.image_pool || CONFIG.IMAGE_GEN_CANDIDATES));
         if (imageCandidates.length === 0) {
@@ -4513,13 +4579,17 @@ export default {
             error: { message: "All image generation models are currently disabled.", code: "model_disabled" }
           }), { status: 503, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
         }
-        const imageModel = imageCandidates.some(c => c.model === body.model) ? body.model : imageCandidates[0].model;
+        const matchedCandidate = imageCandidates.find(c => c.model === body.model) || imageCandidates[0];
+        const providerInfo = CONFIG.PROVIDERS[matchedCandidate.provider] || CONFIG.PROVIDERS.sensenova;
+        const imageModel = matchedCandidate.model;
 
         const upstreamResponse = await fetch(`${providerInfo.baseUrl}/images/generations`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`
+            "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`,
+            "User-Agent": "curl/8.7.1",
+            "Accept": "*/*"
           },
           body: JSON.stringify({
             model: imageModel,
