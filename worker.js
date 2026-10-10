@@ -917,8 +917,11 @@ function getSessionKey(body, headers, token, url) {
   // 2. 深入嗅探 WorkBuddy / Claude Code / Cursor / Agent 注入在系统提示词或上下文中的 sessionId / workspace
   const messages = (body && body.messages) || [];
   if (Array.isArray(messages) && messages.length > 0) {
-    for (const m of messages) {
-      const contentStr = typeof m.content === "string" ? m.content : JSON.stringify(m.content || "");
+    // 性能防护：仅嗅探前 3 条消息，且单条内容截取前 4000 字符，杜绝长会话超长文本导致 Worker CPU 耗尽 (Error 1102)
+    const sniffTargets = messages.slice(0, 3);
+    for (const m of sniffTargets) {
+      const contentStr = typeof m.content === "string" ? m.content.slice(0, 4000) : "";
+      if (!contentStr) continue;
       const match = contentStr.match(/(?:sessionId|session_id|conversationId|conversation_id)["':\s=]+([a-zA-Z0-9_-]{8,64})/i);
       if (match && match[1]) {
         return "sniff_" + match[1];
@@ -929,10 +932,11 @@ function getSessionKey(body, headers, token, url) {
       }
     }
 
-    // 3. 提取首条 user 消息作为对话根指纹 (过滤动态时间戳，提取纯净语义前缀)
+    // 3. 提取首条 user 消息作为对话根指纹 (截取前 1000 字符，过滤动态时间戳)
     const firstUserMsg = messages.find(m => m.role === "user");
     if (firstUserMsg) {
-      const text = normalizeContent(firstUserMsg.content);
+      const rawText = typeof firstUserMsg.content === "string" ? firstUserMsg.content : normalizeContent(firstUserMsg.content);
+      const text = (rawText || "").slice(0, 1000);
       if (text && text.trim().length > 0) {
         const queryMatch = text.match(/<user_query>([\s\S]*?)<\/user_query>/i);
         const coreText = queryMatch ? queryMatch[1] : text;
@@ -1008,25 +1012,30 @@ function normalizeContent(content) {
 
 function extractPromptSummary(messages, maxLen = 600) {
   if (!Array.isArray(messages) || messages.length === 0) return "";
-  const userMessages = messages.filter(m => m && m.role === "user");
-  if (userMessages.length === 0) return "";
-
-  const realUserMsgs = userMessages.filter(m => {
-    const text = normalizeContent(m.content).trim();
-    return !text.startsWith("OpenClaw runtime context") && !text.includes("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>");
-  });
-
-  const targetMsg = realUserMsgs.length > 0 ? realUserMsgs[realUserMsgs.length - 1] : userMessages[userMessages.length - 1];
-  let text = normalizeContent(targetMsg.content).trim();
-
+  let userCount = 0;
+  let targetMsg = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m && m.role === "user") {
+      userCount++;
+      if (!targetMsg) {
+        const text = typeof m.content === "string" ? m.content : normalizeContent(m.content);
+        if (!text.startsWith("OpenClaw runtime context") && !text.includes("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>")) {
+          targetMsg = m;
+        }
+      }
+    }
+  }
+  if (!targetMsg) return "";
+  let text = typeof targetMsg.content === "string" ? targetMsg.content : normalizeContent(targetMsg.content);
+  text = text.trim();
   if (text.includes("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>")) {
     text = text.split("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>")[0].trim();
   }
   if (text.includes("OpenClaw runtime context for the immediately preceding user message")) {
     text = text.split("OpenClaw runtime context for the immediately preceding user message")[0].trim();
   }
-
-  const prefix = userMessages.length > 1 ? `[第${userMessages.length}轮] ` : "";
+  const prefix = userCount > 1 ? `[第${userCount}轮] ` : "";
   const full = prefix + text;
   if (full.length <= maxLen) return full;
   return full.slice(0, maxLen) + "...";
@@ -1119,19 +1128,58 @@ function convertMessagesToOpenAI(messages, keepImageContent) {
   return converted;
 }
 
-// 估算 Token 数量 (保底备用)
+// 估算 Token 数量 (优化版：短文本精确计算，长文本 O(1) 采样，杜绝 CPU 耗尽 Error 1102)
 function estimateTokens(text) {
   if (!text) return 0;
-  let count = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    if (code >= 0x4e00 && code <= 0x9fa5) {
-      count += 1.2;
-    } else {
-      count += 0.3;
+  const len = text.length;
+  if (len === 0) return 0;
+  if (len > 3000) {
+    const sample = text.slice(0, 1000) + text.slice(-1000);
+    let sampleCount = 0;
+    for (let i = 0; i < sample.length; i++) {
+      const code = sample.charCodeAt(i);
+      sampleCount += (code >= 0x4e00 && code <= 0x9fa5) ? 1.2 : 0.3;
     }
+    const ratio = sampleCount / sample.length;
+    return Math.max(Math.round(len * ratio), 1);
+  }
+  let count = 0;
+  for (let i = 0; i < len; i++) {
+    const code = text.charCodeAt(i);
+    count += (code >= 0x4e00 && code <= 0x9fa5) ? 1.2 : 0.3;
   }
   return Math.max(Math.round(count), 1);
+}
+
+// 零内存拼接的 Messages Token 估算：直接统计长度与采样，绝不创建拼接巨型字符串
+function estimateMessagesTokens(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  let totalLen = 0;
+  let sampleText = "";
+  for (const m of messages) {
+    if (typeof m.content === "string") {
+      totalLen += m.content.length;
+      if (sampleText.length < 2000) sampleText += m.content.slice(0, 500);
+    } else if (Array.isArray(m.content)) {
+      for (const part of m.content) {
+        if (part && typeof part.text === "string") {
+          totalLen += part.text.length;
+          if (sampleText.length < 2000) sampleText += part.text.slice(0, 500);
+        } else if (part && (part.type === "image_url" || part.image_url)) {
+          totalLen += 800; // 单图估算约 800 字符当量，不接触 base64
+        }
+      }
+    }
+  }
+  if (totalLen === 0) return 0;
+  if (!sampleText) return Math.round(totalLen * 0.4);
+  let sampleCount = 0;
+  for (let i = 0; i < sampleText.length; i++) {
+    const code = sampleText.charCodeAt(i);
+    sampleCount += (code >= 0x4e00 && code <= 0x9fa5) ? 1.2 : 0.3;
+  }
+  const ratio = sampleCount / sampleText.length;
+  return Math.max(Math.round(totalLen * ratio), 1);
 }
 
 // 记录精准请求统计数据到 KV
@@ -4133,6 +4181,7 @@ export default {
         }
 
         let lastError = null;
+        const estPromptTokens = estimateMessagesTokens(messages);
 
         for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
           if (request.signal?.aborted) {
@@ -4180,9 +4229,9 @@ export default {
                         finish_reason: "stop"
                       }],
                       usage: cfRes.usage || {
-                        prompt_tokens: estimateTokens(messages.map(m => m.content).join(" ")),
+                        prompt_tokens: estPromptTokens,
                         completion_tokens: estimateTokens(cfRes.response),
-                        total_tokens: estimateTokens(messages.map(m => m.content).join(" ")) + estimateTokens(cfRes.response)
+                        total_tokens: estPromptTokens + estimateTokens(cfRes.response)
                       }
                     };
                   }
@@ -4219,7 +4268,6 @@ export default {
               }
 
               const isFlashModel = /flash|lite|fast/i.test(candidate.model);
-              const estPromptTokens = estimateTokens(messages.map(m => typeof m.content === "string" ? m.content : JSON.stringify(m.content || "")).join(" "));
               let baseTimeoutMs = isFlashModel ? 30000 : 50000;
               if (estPromptTokens > 40000) {
                 baseTimeoutMs = isFlashModel ? 75000 : 90000;
@@ -4349,8 +4397,8 @@ export default {
                           usage: parsed.usage
                         };
                         outputLine = "data: " + JSON.stringify(oaiChunk);
-                      } else if (originalModel !== "auto" && originalModel !== "default") {
-                        if (parsed.model) {
+                      } else if (originalModel !== "auto" && originalModel !== "default" && originalModel !== "fast" && originalModel !== "all") {
+                        if (parsed.model && parsed.model !== originalModel) {
                           parsed.model = originalModel;
                           outputLine = "data: " + JSON.stringify(parsed);
                         }
@@ -4359,7 +4407,9 @@ export default {
                     }
 
                     if (deltaText) {
-                      accumulatedOutputText += deltaText;
+                      if (accumulatedOutputText.length < 5000) {
+                        accumulatedOutputText += deltaText;
+                      }
                       if (isAnthropicMessages) {
                         const sse = `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":${JSON.stringify(deltaText)}}}\n\n`;
                         await writer.write(encoder.encode(sse));
@@ -4406,7 +4456,7 @@ export default {
 
                 await writer.close();
 
-                const promptTokens = finalUsage?.prompt_tokens || estimateTokens(messages.map(m => m.content).join(" "));
+                const promptTokens = finalUsage?.prompt_tokens || estPromptTokens;
                 const completionTokens = finalUsage?.completion_tokens || estimateTokens(accumulatedOutputText);
                 const cachedTokens = finalUsage?.prompt_tokens_details?.cached_tokens || finalUsage?.cache_read_input_tokens || 0;
                 const reasoningTokens = finalUsage?.completion_tokens_details?.reasoning_tokens || 0;
@@ -4449,7 +4499,7 @@ export default {
             }
 
             const usage = openaiData.usage || {};
-            const promptTokens = usage.prompt_tokens || estimateTokens(messages.map(m => m.content).join(" "));
+            const promptTokens = usage.prompt_tokens || estPromptTokens;
             const completionTokens = usage.completion_tokens || 20;
             const cachedTokens = usage.prompt_tokens_details?.cached_tokens || usage.cache_read_input_tokens || 0;
             const reasoningTokens = usage.completion_tokens_details?.reasoning_tokens || 0;
