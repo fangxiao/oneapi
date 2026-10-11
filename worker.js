@@ -55,6 +55,21 @@ const CONFIG = {
       "glm-5.3": [1.5, 6],
       "intern-s2": [1, 4],
       "minimax-m3": [1, 4],
+      "dots3-note-prev": [1, 4],
+      "LongCat-2.5-Preview": [1, 4],
+      "longcat-2.5-preview": [1, 4],
+      "Atria-Dawn-Preview": [1, 4],
+      "atria-dawn-preview": [1, 4],
+      "ling-3.0-flash": [0.5, 2],
+      "ling-3.1-flash": [0.5, 2],
+      "ling-2.6-flash": [0.5, 2],
+      "ling-3.0-tiny": [0.2, 0.8],
+      "ling-3.0-flash-vl": [0.8, 3],
+      "agnes-3.0-flash": [1, 4],
+      "agnes-2.5-flash": [1, 4],
+      "agnes-2.0-flash": [1, 4],
+      "agnes-3.0-flash-max": [1.5, 6],
+      "agnes-2.5-pro": [2, 8],
       "intern-latest": [1, 4],
       "qwen/qwen3.8-27b:free": [0, 0],
       "z-ai/glm-5.2:free": [0, 0],
@@ -92,14 +107,20 @@ const CONFIG = {
     internai: "上海人工智能实验室 (InternAI)",
     discovery: "上海人工智能实验室 (InternAI Discovery)",
     openrouter: "OpenRouter (Free)",
-    cloudflare: "Cloudflare Workers AI (10k Neurons/Day Free)"
+    cloudflare: "Cloudflare Workers AI (10k Neurons/Day Free)",
+    diandian: "点点 (AskDianDian)",
+    mimo: "小米 MiMo (Xiaomi MiMo)",
+    longcat: "美团 LongCat (LongCat)",
+    antling: "蚂蚁灵境 (Antling)",
+    agnes: "Agnes AI (ApiHub)",
+    atria: "Atria (上海AI实验室 ASI)"
   },
 
   PROVIDERS: {
     sensenova: {
       baseUrl: "https://token.sensenova.cn/v1",
       apiKey: "",
-      models: ["sensenova-6.8-flash-lite", "deepseek-v4-flash", "glm-5.2", "deepseek-v4-pro"]
+      models: ["sensenova-6.8-flash-lite", "deepseek-v4-flash", "glm-5.2"]
     },
     eaglesine: {
       baseUrl: "https://api.eaglesine.com/v1",
@@ -124,7 +145,7 @@ const CONFIG = {
     volces: {
       baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
       apiKey: "",
-      models: ["glm-5.3-flash", "deepseek-v4-flash", "deepseek-v4.1-flash"]
+      models: [] // 已下架停用 (Decommissioned)
     },
     internai: {
       baseUrl: "https://chat.intern-ai.org.cn/api/v1",
@@ -189,30 +210,51 @@ const CONFIG = {
         "Ling-3.0-tiny",
         "Ling-3.0-flash-VL"
       ]
+    },
+    diandian: {
+      baseUrl: "https://note3-prev-api.askdiandian.com/v1",
+      apiKey: "ak_ADzop8mYWda4ky9zgUvxKkwckO6k2",
+      models: ["dots3-note-prev"]
+    },
+    mimo: {
+      baseUrl: "https://api.xiaomimimo.com/v1",
+      apiKey: "sk-c00yijiu5ai0xb48ebiqc4r23xdvxddw84hh4bi7kt4y8f87",
+      models: ["mimo-v2.6-flash"]
+    },
+    longcat: {
+      baseUrl: "https://api.longcat.chat/openai/v1",
+      apiKey: "ak_20D9BB4PO8z72o773n9pu2Q39wQ5V",
+      models: ["LongCat-2.5-Preview"]
+    },
+    atria: {
+      baseUrl: "https://api.atria-asi.ai/v1",
+      apiKey: "atr_ABw1Ym4Z6dJsyxKRIQc0cPI5JKkEn9l4",
+      models: ["Atria-Dawn-Preview"]
     }
   },
 
   // ⚡ 极速精选把关池 (fast / auto / default): 准入门槛极高，推理极速，长上下文，高并发稳定性
   AUTO_CANDIDATES: [
+    { provider: "atria", model: "Atria-Dawn-Preview" },
+    { provider: "longcat", model: "LongCat-2.5-Preview" },
+    { provider: "mimo", model: "mimo-v2.6-flash" },
+    { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
-    { provider: "volces", model: "glm-5.3-flash" },
-    { provider: "volces", model: "deepseek-v4.1-flash" },
-    { provider: "sensenova", model: "deepseek-v4-flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
-    { provider: "volces", model: "deepseek-v4-flash" }
+    { provider: "sensenova", model: "deepseek-v4-flash" }
   ],
 
   // 🌐 全量模型池 (all): 涵盖平台接入的所有可用对话模型 (大模型、Pro、专业模型全量分流)
   ALL_CANDIDATES: [
+    { provider: "atria", model: "Atria-Dawn-Preview" },
+    { provider: "longcat", model: "LongCat-2.5-Preview" },
+    { provider: "mimo", model: "mimo-v2.6-flash" },
+    { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
-    { provider: "volces", model: "glm-5.3-flash" },
-    { provider: "volces", model: "deepseek-v4.1-flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
-    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
-    { provider: "volces", model: "deepseek-v4-flash" },
-    { provider: "sensenova", model: "deepseek-v4-pro" },
     { provider: "sensenova", model: "glm-5.2" },
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
+    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Pro" },
     { provider: "eaglesine", model: "Kimi-K2.6" },
     { provider: "eaglesine", model: "qwen3.8-27b" },
@@ -231,6 +273,7 @@ const CONFIG = {
 
   // 🖼️ 多模态视觉池 (multimodal / 带图请求自动升轨)
   MULTIMODAL_CANDIDATES: [
+    { provider: "atria", model: "Atria-Dawn-Preview" },
     { provider: "antling", model: "Ling-3.0-flash-VL" },
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
     { provider: "discovery", model: "deepseek-v4-flash-vision" },
@@ -408,7 +451,12 @@ const PROVIDER_SECRET_NAMES = {
   internai: "INTERNAI_API_KEY",
   discovery: "DISCOVERY_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
-  antling: "ANTLING_API_KEY"
+  antling: "ANTLING_API_KEY",
+  diandian: "DIANDIAN_API_KEY",
+  mimo: "MIMO_API_KEY",
+  longcat: "LONGCAT_API_KEY",
+  agnes: "AGNES_API_KEY",
+  atria: "ATRIA_API_KEY"
 };
 
 function applyProviderSecrets(env) {
@@ -1210,7 +1258,8 @@ async function recordUsage(env, data) {
       statsBuffer.dirty = false;
     }
 
-    const model = data.model || "unknown";
+    // 统计模型分布时，优先记录真实路由落地的模型（如 auto/fast/all 路由到底层模型的真实负载），便于精准审计
+    const model = data.routed_model || data.model || "unknown";
     const userName = data.user || "管理员 (本人)";
     const provider = data.provider || "auto";
     const promptTokens = data.prompt_tokens || 0;
@@ -1316,7 +1365,7 @@ function deriveProvidersFromModels(models) {
     "deepseek-v4.1-flash": "amd",
     "qwen3.8-flash-next": "amd",
     "minicpm5-2b": "amd",
-    "mimo-v2.6-flash": "amd",
+    "mimo-v2.6-flash": "mimo",
     "meta/muse-spark-1.3-contributor": "opencode",
     "poolside/laguna-s-2.1": "opencode",
     "upstage/solar-pro4": "opencode",
@@ -1338,9 +1387,29 @@ function deriveProvidersFromModels(models) {
     "nvidia/nemotron-3-ultra-550b-a55b:free": "openrouter",
     "stealth/space-bunny-alpha": "openrouter",
     "space-bunny-alpha": "openrouter",
-    "space-bunny": "openrouter"
+    "space-bunny": "openrouter",
+    "dots3-note-prev": "diandian",
+    "LongCat-2.5-Preview": "longcat",
+    "longcat-2.5-preview": "longcat",
+    "ling-3.0-flash": "antling",
+    "ling-3.1-flash": "antling",
+    "ling-2.6-flash": "antling",
+    "ling-3.0-tiny": "antling",
+    "ling-3.0-flash-vl": "antling",
+    "agnes-3.0-flash": "agnes",
+    "agnes-2.5-flash": "agnes",
+    "agnes-2.0-flash": "agnes",
+    "agnes-3.0-flash-max": "agnes",
+    "agnes-2.5-pro": "agnes",
+    "agnes-image-2.5-flash": "agnes",
+    "agnes-image-2.1-flash": "agnes",
+    "agnes-image-2.0-flash": "agnes",
+    "agnes-video-2.5-flash": "agnes",
+    "agnes-video-2.5": "agnes",
+    "Atria-Dawn-Preview": "atria",
+    "atria-dawn-preview": "atria"
   };
-  const autoShares = { volces: 0.35, eaglesine: 0.35, sensenova: 0.15, internai: 0.10, amd: 0.05 };
+  const autoShares = { atria: 0.25, longcat: 0.25, mimo: 0.20, eaglesine: 0.15, sensenova: 0.15 };
   const res = {};
   for (const [m, s] of Object.entries(models)) {
     const mLower = String(m || "").toLowerCase();
@@ -1970,10 +2039,10 @@ async function callInternalAi(env, runtimeCfg, messages) {
   const openChannels = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, pool));
   
   const candidates = [
+    ...openChannels.filter(c => c.provider === "atria"),
     ...openChannels.filter(c => c.provider === "cloudflare"),
-    ...openChannels.filter(c => c.provider === "volces"),
     ...openChannels.filter(c => c.provider === "eaglesine"),
-    ...openChannels.filter(c => c.provider !== "cloudflare" && c.provider !== "volces" && c.provider !== "eaglesine")
+    ...openChannels.filter(c => c.provider !== "cloudflare" && c.provider !== "atria" && c.provider !== "eaglesine")
   ];
 
   if (candidates.length === 0) throw new Error("No available channels for internal AI call.");
@@ -3680,86 +3749,103 @@ export default {
         });
       }
       const contentType = request.headers.get("content-type") || "";
-      let action, provider, model, backPage;
       try {
+        let action, provider, model, backPage;
+        try {
+          if (contentType.includes("application/json")) {
+            const payload = await request.json();
+            action = payload.action; provider = payload.provider; model = payload.model; backPage = payload.page;
+          } else {
+            const form = await request.formData();
+            action = form.get("action"); provider = form.get("provider"); model = form.get("model"); backPage = form.get("page");
+          }
+        } catch (err) {
+          return new Response(JSON.stringify({ error: { message: "Invalid request body." } }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+
+        const registeredChannel = Object.entries(CONFIG.PROVIDERS).some(([pKey, pVal]) =>
+          pKey === provider && Array.isArray(pVal?.models) && pVal.models.some(m => m.toLowerCase() === String(model || "").toLowerCase())
+        );
+        if (!["toggle_channel", "auto_pool_add", "auto_pool_remove", "auto_pool_reset", "all_pool_add", "all_pool_remove", "all_pool_reset", "reset_circuit", "multimodal_pool_add", "multimodal_pool_remove", "multimodal_pool_reset", "image_pool_add", "image_pool_remove", "image_pool_reset"].includes(action)) {
+          return new Response(JSON.stringify({ error: { message: `Unknown action '${action}'.` } }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+        if (!action.endsWith("_reset") && action !== "reset_circuit" && !(provider && CONFIG.PROVIDERS[provider] && model && String(model).trim())) {
+          return new Response(JSON.stringify({ error: { message: "Valid provider and model are required." } }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+        if (action === "toggle_channel" && !registeredChannel) {
+          return new Response(JSON.stringify({ error: { message: `Channel '${provider}/${model}' is not registered.` } }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+
+        const runtimeCfg = await getRuntimeConfig(env);
+        const disabled = new Set(runtimeCfg.disabled_channels);
+        const poolActions = {
+          auto_pool_add: ["auto_pool", "AUTO_CANDIDATES"],
+          auto_pool_remove: ["auto_pool", "AUTO_CANDIDATES"],
+          auto_pool_reset: ["auto_pool", "AUTO_CANDIDATES"],
+          all_pool_add: ["all_pool", "ALL_CANDIDATES"],
+          all_pool_remove: ["all_pool", "ALL_CANDIDATES"],
+          all_pool_reset: ["all_pool", "ALL_CANDIDATES"],
+          multimodal_pool_add: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
+          multimodal_pool_remove: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
+          multimodal_pool_reset: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
+          image_pool_add: ["image_pool", "IMAGE_GEN_CANDIDATES"],
+          image_pool_remove: ["image_pool", "IMAGE_GEN_CANDIDATES"],
+          image_pool_reset: ["image_pool", "IMAGE_GEN_CANDIDATES"]
+        };
+        const sameChannel = (c) => c.provider === provider && c.model.toLowerCase() === String(model).toLowerCase();
+
+        if (action === "toggle_channel") {
+          const channelKey = (provider + ":" + model).toLowerCase();
+          if (disabled.has(channelKey)) { disabled.delete(channelKey); } else { disabled.add(channelKey); }
+        } else if (poolActions[action]) {
+          const [poolKey, defaultKey] = poolActions[action];
+          let pool = runtimeCfg[poolKey] ? runtimeCfg[poolKey].map(c => ({ ...c })) : null;
+          if (action.endsWith("_add")) {
+            const base = pool || CONFIG[defaultKey].map(c => ({ ...c }));
+            if (!base.some(sameChannel)) base.push({ provider, model: String(model).trim() });
+            pool = base;
+          } else if (action.endsWith("_remove")) {
+            pool = (pool || CONFIG[defaultKey].map(c => ({ ...c }))).filter(c => !sameChannel(c));
+            if (pool.length === 0) pool = null;
+          } else {
+            pool = null;
+          }
+          runtimeCfg[poolKey] = pool;
+        }
+
+        if (action === "reset_circuit" && env.USAGE_KV) {
+          const health = await getChannelHealth(env);
+          delete health[(provider + ":" + model).toLowerCase()];
+          delete health["p:" + provider.toLowerCase()];
+          try {
+            await env.USAGE_KV.put("channel_health", JSON.stringify(health));
+          } catch (e) {
+            console.error("Failed to update channel_health KV:", e);
+          }
+        }
+
+        try {
+          await env.USAGE_KV.put("runtime_config", JSON.stringify({ disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }));
+        } catch (e) {
+          console.error("Failed to update runtime_config KV:", e);
+          return new Response(JSON.stringify({ error: { message: "KV write limit reached or failed: " + e.message } }), { status: 503, headers: { "Content-Type": "application/json" } });
+        }
+        RUNTIME_CFG_TS = 0;
+        RUNTIME_CFG_CACHE = null;
+
         if (contentType.includes("application/json")) {
-          const payload = await request.json();
-          action = payload.action; provider = payload.provider; model = payload.model; backPage = payload.page;
-        } else {
-          const form = await request.formData();
-          action = form.get("action"); provider = form.get("provider"); model = form.get("model"); backPage = form.get("page");
+          return new Response(JSON.stringify({ ok: true, action, disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }), {
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
         }
+        return Response.redirect(new URL("/usage?page=" + encodeURIComponent(backPage || "models"), request.url), 303);
       } catch (err) {
-        return new Response(JSON.stringify({ error: { message: "Invalid request body." } }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-
-      const registeredChannel = Object.entries(CONFIG.PROVIDERS).some(([pKey, pVal]) =>
-        pKey === provider && pVal.models.some(m => m.toLowerCase() === String(model || "").toLowerCase())
-      );
-      if (!["toggle_channel", "auto_pool_add", "auto_pool_remove", "auto_pool_reset", "all_pool_add", "all_pool_remove", "all_pool_reset", "reset_circuit", "multimodal_pool_add", "multimodal_pool_remove", "multimodal_pool_reset", "image_pool_add", "image_pool_remove", "image_pool_reset"].includes(action)) {
-        return new Response(JSON.stringify({ error: { message: `Unknown action '${action}'.` } }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-      if (!action.endsWith("_reset") && action !== "reset_circuit" && !(provider && CONFIG.PROVIDERS[provider] && model && String(model).trim())) {
-        return new Response(JSON.stringify({ error: { message: "Valid provider and model are required." } }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-      if (action === "toggle_channel" && !registeredChannel) {
-        return new Response(JSON.stringify({ error: { message: `Channel '${provider}/${model}' is not registered.` } }), { status: 400, headers: { "Content-Type": "application/json" } });
-      }
-
-      const runtimeCfg = await getRuntimeConfig(env);
-      const disabled = new Set(runtimeCfg.disabled_channels);
-      const poolActions = {
-        auto_pool_add: ["auto_pool", "AUTO_CANDIDATES"],
-        auto_pool_remove: ["auto_pool", "AUTO_CANDIDATES"],
-        auto_pool_reset: ["auto_pool", "AUTO_CANDIDATES"],
-        all_pool_add: ["all_pool", "ALL_CANDIDATES"],
-        all_pool_remove: ["all_pool", "ALL_CANDIDATES"],
-        all_pool_reset: ["all_pool", "ALL_CANDIDATES"],
-        multimodal_pool_add: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
-        multimodal_pool_remove: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
-        multimodal_pool_reset: ["multimodal_pool", "MULTIMODAL_CANDIDATES"],
-        image_pool_add: ["image_pool", "IMAGE_GEN_CANDIDATES"],
-        image_pool_remove: ["image_pool", "IMAGE_GEN_CANDIDATES"],
-        image_pool_reset: ["image_pool", "IMAGE_GEN_CANDIDATES"]
-      };
-      const sameChannel = (c) => c.provider === provider && c.model.toLowerCase() === String(model).toLowerCase();
-
-      if (action === "toggle_channel") {
-        const channelKey = (provider + ":" + model).toLowerCase();
-        if (disabled.has(channelKey)) { disabled.delete(channelKey); } else { disabled.add(channelKey); }
-      } else if (poolActions[action]) {
-        const [poolKey, defaultKey] = poolActions[action];
-        let pool = runtimeCfg[poolKey] ? runtimeCfg[poolKey].map(c => ({ ...c })) : null;
-        if (action.endsWith("_add")) {
-          const base = pool || CONFIG[defaultKey].map(c => ({ ...c }));
-          if (!base.some(sameChannel)) base.push({ provider, model: String(model).trim() });
-          pool = base;
-        } else if (action.endsWith("_remove")) {
-          pool = (pool || CONFIG[defaultKey].map(c => ({ ...c }))).filter(c => !sameChannel(c));
-          if (pool.length === 0) pool = null;
-        } else {
-          pool = null;
-        }
-        runtimeCfg[poolKey] = pool;
-      }
-
-      if (action === "reset_circuit" && env.USAGE_KV) {
-        const health = await getChannelHealth(env);
-        delete health[(provider + ":" + model).toLowerCase()];
-        delete health["p:" + provider.toLowerCase()];
-        await env.USAGE_KV.put("channel_health", JSON.stringify(health));
-      }
-
-      await env.USAGE_KV.put("runtime_config", JSON.stringify({ disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }));
-      RUNTIME_CFG_TS = 0;
-      RUNTIME_CFG_CACHE = null;
-
-      if (contentType.includes("application/json")) {
-        return new Response(JSON.stringify({ ok: true, action, disabled_channels: [...disabled], auto_pool: runtimeCfg.auto_pool, all_pool: runtimeCfg.all_pool, multimodal_pool: runtimeCfg.multimodal_pool, image_pool: runtimeCfg.image_pool }), {
+        console.error("admin/models error:", err);
+        return new Response(JSON.stringify({ error: { message: err.message || "Failed to process model action." } }), {
+          status: 500,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
-      return Response.redirect(new URL("/usage?page=" + encodeURIComponent(backPage || "models"), request.url), 303);
     }
 
     // 0.7 API Key 运行时管理接口 (仅 Master Key): 签发/编辑/启停/删除, KV 持久化
@@ -3934,8 +4020,8 @@ export default {
         "auto", "fast", "all", "default", "multimodal", "image", "Ling-3.0-flash", "Ling-3.0-flash-VL", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "deepseek-v4-flash-0731", "deepseek-v4-flash-vision", "deepseek-v4-pro-0813",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.3", "glm-5.2",
-        "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
-        "minimax-m3",
+        "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6",
+        "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview",
         "sensenova-u1-fast", "sensenova-u1.5-lite",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
         "MiMo-V2.6-Flash", "mimo-v2.6-flash",
