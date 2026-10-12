@@ -11,8 +11,8 @@
   - OpenAI 协议：支持 `/v1/chat/completions`、`/v1/models`、`/v1/images/generations`、`/v1/audio/transcriptions`。
   - Anthropic 协议：原生支持 `/v1/messages` 接口与 Claude 原生流式协议。
 - **多供应商智能路由与容灾**：
-  - 聚合上海人工智能实验室 (InternAI / Discovery)、火山引擎 (Volcengine)、商汤日日新 (SenseNova)、AMD 开发者云、OpenCode、OpenRouter (Free) 及 Cloudflare Workers AI。
-  - 支持智能自适应路由（`model: "auto"`）、多模态意图识别、通道健康探活、熔断降级与会话粘性哈希。
+  - 聚合上海人工智能实验室 (InternAI / Discovery / Atria)、美团 (LongCat)、小米 (MiMo)、点点 (AskDianDian)、蚂蚁灵境 (Antling)、商汤日日新 (SenseNova)、AMD 开发者云、OpenCode、OpenRouter (Free) 及 Cloudflare Workers AI。
+  - 支持智能自适应路由（`model: "auto"` / `fast` / `all`）、多模态意图识别、通道健康探活、熔断降级与会话粘性哈希。
 - **可视化管理与审计控制台 (`/usage`)**：
   - 实时用量监控：Token 吞吐、Prompt Cache 命中率、请求成功率、P95 延迟与参考账单测算。
   - API Key 细粒度管理：支持在线生成、停用、过期时间与 RPM 限流设置。
@@ -92,10 +92,14 @@ echo "your-master-secret-key" | wrangler secret put MASTER_KEY
 echo "sk-user-admin" | wrangler secret put ALLOWED_DASHBOARD_KEYS
 
 # 配置各上游供应商 API Key (多个 Key 用逗号分隔实现自动轮询)
-echo "your-sensenova-key" | wrangler secret put SENSENOVA_API_KEY
-echo "your-volces-key"    | wrangler secret put VOLCES_API_KEY
-echo "your-discovery-key" | wrangler secret put DISCOVERY_API_KEY
-echo "your-openrouter-key"| wrangler secret put OPENROUTER_API_KEY
+echo "your-atria-key"      | wrangler secret put ATRIA_API_KEY
+echo "your-longcat-key"    | wrangler secret put LONGCAT_API_KEY
+echo "your-mimo-key"       | wrangler secret put MIMO_API_KEY
+echo "your-diandian-key"   | wrangler secret put DIANDIAN_API_KEY
+echo "your-antling-key"    | wrangler secret put ANTLING_API_KEY
+echo "your-sensenova-key"  | wrangler secret put SENSENOVA_API_KEY
+echo "your-discovery-key"  | wrangler secret put DISCOVERY_API_KEY
+echo "your-openrouter-key" | wrangler secret put OPENROUTER_API_KEY
 ```
 
 ### 5. 发布上线
