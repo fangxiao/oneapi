@@ -66,6 +66,7 @@ const CONFIG = {
       "longcat-2.5-preview": [1, 4],
       "Atria-Dawn-Preview": [1, 4],
       "atria-dawn-preview": [1, 4],
+      "u2-flash": [0.5, 2],
       "ling-3.0-flash": [0.5, 2],
       "ling-3.1-flash": [0.5, 2],
       "ling-2.6-flash": [0.5, 2],
@@ -113,7 +114,8 @@ const CONFIG = {
     longcat: "美团 LongCat (LongCat)",
     antling: "蚂蚁灵境 (Antling)",
     agnes: "Agnes AI (ApiHub)",
-    atria: "Atria (上海AI实验室 ASI)"
+    atria: "Atria (上海AI实验室 ASI)",
+    unisound: "云知声 (Unisound)"
   },
 
   PROVIDERS: {
@@ -243,6 +245,11 @@ const CONFIG = {
         "agnes-video-2.5-flash",
         "agnes-video-2.5"
       ]
+    },
+    unisound: {
+      baseUrl: "https://maas-api.unisound.com/v1",
+      apiKey: "sk-bw51n8pmgscweghqyzbbocf50qg9v9ded25y95rvaenbleis",
+      models: ["u2-flash"]
     }
   },
 
@@ -253,6 +260,7 @@ const CONFIG = {
     { provider: "mimo", model: "mimo-v2.6-flash" },
     { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
+    { provider: "unisound", model: "u2-flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
     { provider: "agnes", model: "agnes-3.0-flash" },
@@ -266,6 +274,7 @@ const CONFIG = {
     { provider: "mimo", model: "mimo-v2.6-flash" },
     { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
+    { provider: "unisound", model: "u2-flash" },
     { provider: "agnes", model: "agnes-3.0-flash" },
     { provider: "agnes", model: "agnes-2.5-flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
@@ -470,11 +479,12 @@ const PROVIDER_SECRET_NAMES = {
   discovery: "DISCOVERY_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   antling: "ANTLING_API_KEY",
-diandian: "DIANDIAN_API_KEY",
+  diandian: "DIANDIAN_API_KEY",
   mimo: "MIMO_API_KEY",
   longcat: "LONGCAT_API_KEY",
   agnes: "AGNES_API_KEY",
-  atria: "ATRIA_API_KEY"
+  atria: "ATRIA_API_KEY",
+  unisound: "UNISOUND_API_KEY"
 };
 
 function applyProviderSecrets(env) {
@@ -1477,9 +1487,10 @@ function deriveProvidersFromModels(models) {
     "agnes-video-2.5-flash": "agnes",
     "agnes-video-2.5": "agnes",
     "Atria-Dawn-Preview": "atria",
-    "atria-dawn-preview": "atria"
+    "atria-dawn-preview": "atria",
+    "u2-flash": "unisound"
   };
-  const autoShares = { atria: 0.25, longcat: 0.25, mimo: 0.20, eaglesine: 0.15, sensenova: 0.15 };
+  const autoShares = { atria: 0.20, longcat: 0.20, mimo: 0.20, unisound: 0.15, eaglesine: 0.15, sensenova: 0.10 };
   const res = {};
   for (const [m, s] of Object.entries(models)) {
     const mLower = String(m || "").toLowerCase();
@@ -3633,6 +3644,7 @@ export default {
       const channelTable = Object.entries(CONFIG.PROVIDERS).flatMap(([pKey, pVal]) => pVal.models.map(m => ({ provider: pKey, model: m })));
       const listedModels = [
         "auto", "default", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
+        "u2-flash",
         "Ling-3.0-flash", "Ling-3.1-flash", "Ling-2.6-flash",
         "agnes-3.0-flash", "agnes-2.5-flash", "agnes-image-2.5-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
@@ -4095,7 +4107,7 @@ export default {
         "agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.3", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6",
-        "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview",
+        "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview", "u2-flash",
         "sensenova-u1-fast", "sensenova-u1.5-lite",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
         "MiMo-V2.6-Flash", "mimo-v2.6-flash",
