@@ -4330,7 +4330,7 @@ export default {
                   const cfStream = await env.AI.run(cfModel, {
                     messages: messages,
                     stream: true,
-                    max_tokens: body.max_tokens || 4096,
+                    max_tokens: body.max_tokens || body.max_completion_tokens || 4096,
                     temperature: body.temperature ?? 0.7
                   });
                   upstreamResponse = new Response(cfStream, {
@@ -4339,7 +4339,7 @@ export default {
                 } else {
                   let cfRes = await env.AI.run(cfModel, {
                     messages: messages,
-                    max_tokens: body.max_tokens || 4096,
+                    max_tokens: body.max_tokens || body.max_completion_tokens || 4096,
                     temperature: body.temperature ?? 0.7
                   });
                   if (cfRes && !cfRes.choices && cfRes.response !== undefined) {
@@ -4377,11 +4377,12 @@ export default {
               }
             } else {
               const targetUpstreamModel = (candidate.provider === "openrouter" && OPENROUTER_MODEL_MAP[candidate.model]) || candidate.model;
+              const effectiveMaxTokens = body.max_tokens || body.max_completion_tokens || 8192;
               const upstreamBody = {
                 model: targetUpstreamModel,
                 messages: messages,
                 temperature: body.temperature ?? 0.7,
-                max_tokens: body.max_tokens || 4096,
+                max_tokens: effectiveMaxTokens,
                 stream: isStream,
                 stream_options: isStream ? { include_usage: true } : undefined
               };
@@ -4461,6 +4462,7 @@ export default {
 
               ctx.waitUntil((async () => {
                 let finalUsage = null;
+                let finalFinishReason = null;
                 let accumulatedOutputText = "";
                 const msgId = "msg_" + Math.random().toString(36).slice(2, 11);
 
@@ -4502,6 +4504,9 @@ export default {
 
                     if (parsed.usage) {
                       finalUsage = parsed.usage;
+                    }
+                    if (parsed.choices?.[0]?.finish_reason) {
+                      finalFinishReason = parsed.choices[0].finish_reason;
                     }
 
                     const delta = parsed.choices?.[0]?.delta || {};
@@ -4575,7 +4580,7 @@ export default {
                     await writer.write(encoder.encode(`event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`));
                   }
                   const outTokens = Number(finalUsage?.completion_tokens) || estimateTokens(accumulatedOutputText) || 20;
-                  const stopReason = toolCallCount > 0 ? "tool_use" : "end_turn";
+                  const stopReason = toolCallCount > 0 ? "tool_use" : (finalFinishReason === "length" ? "max_tokens" : "end_turn");
                   await writer.write(encoder.encode(`event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"${stopReason}","stop_sequence":null},"usage":{"output_tokens":${outTokens}}}\n\n`));
                   await writer.write(encoder.encode(`event: message_stop\ndata: {"type":"message_stop"}\n\n`));
                 }
