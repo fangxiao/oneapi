@@ -1039,12 +1039,16 @@ async function getSessionPinnedCandidate(env, sessionKey, targetModel, pool) {
   return null;
 }
 
-// 记录会话锁定的模型（异步，0 延迟阻断）
+const SESSION_PIN_MEM = new Set();
+// 记录会话锁定的模型（异步，0 延迟阻断，防同一会话多轮重复写 KV 耗尽配额）
 async function recordSessionPin(env, sessionKey, targetModel, provider, model) {
   if (!env.USAGE_KV || !sessionKey) return;
+  const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+  const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
+  if (SESSION_PIN_MEM.has(pinKey)) return;
+  SESSION_PIN_MEM.add(pinKey);
+  if (SESSION_PIN_MEM.size > 2000) SESSION_PIN_MEM.clear();
   try {
-    const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
-    const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
     const pinData = {
       provider,
       model,
@@ -1390,15 +1394,13 @@ async function recordUsage(env, data) {
     dp.prompt_tokens += promptTokens;
     dp.completion_tokens += completionTokens;
 
-    if (statsBuffer.logs === null) {
-      statsBuffer.logs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
-    }
+    const existingLogs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
     const nowBeijing = new Date().toLocaleString("zh-CN", {
       timeZone: "Asia/Shanghai",
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
     }).replace(/\//g, "-");
-    statsBuffer.logs.unshift({
+    existingLogs.unshift({
       time: nowBeijing,
       user: userName,
       model: model,
@@ -1411,12 +1413,13 @@ async function recordUsage(env, data) {
       prompt: data.prompt || "",
       status: "200 OK"
     });
-    if (statsBuffer.logs.length > 60) statsBuffer.logs = statsBuffer.logs.slice(0, 60);
+    statsBuffer.logs = existingLogs.slice(0, 60);
     statsBuffer.dirty = true;
 
-    if (Date.now() - statsBuffer.lastFlush >= STATS_FLUSH_INTERVAL_MS) {
-      await flushStatsBuffer(env);
-    }
+    // Cloudflare Worker 为无状态/Serverless 架构，实例闲置数秒即会被边缘回收。
+    // 若依赖 5 分钟定时批量，零散请求极易在实例销毁前未触发刷盘而随内存丢失。
+    // 此处在每次请求记录后立即刷盘，确保调用流水和统计数据 100% 实时持久化落库！
+    await flushStatsBuffer(env);
   } catch (e) {
     console.error("KV Record Error:", e);
   }
