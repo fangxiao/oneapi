@@ -337,6 +337,10 @@ const AUTO_EXCLUDED_MODELS = new Set([
   "whisper-1",
   "minicpm5-2b",
   "mimo-v2.5",
+  "glm-5.3-flash",
+  "glm-5.3",
+  "deepseek-v4.1-flash",
+  "deepseek-v4-flash-0731",
   "@cf/meta/llama-3.1-8b-instruct-fast",
   "cf-llama-3.1-8b",
   "llama-3.1-8b",
@@ -452,12 +456,19 @@ let RUNTIME_CFG_TS = 0;
 
 async function getRuntimeConfig(env, force = false) {
   const empty = { disabled_channels: [], auto_pool: null, multimodal_pool: null, image_pool: null };
-  if (!env.USAGE_KV) return empty;
+  if (!env || !env.USAGE_KV) return empty;
+  applyProviderSecrets(env);
   if (!force && RUNTIME_CFG_CACHE && (Date.now() - RUNTIME_CFG_TS < 15000)) {
     return RUNTIME_CFG_CACHE;
   }
   const saved = await env.USAGE_KV.get("runtime_config", { type: "json" }) || {};
-  const pool = (v) => Array.isArray(v) && v.length > 0 ? v : null;
+  const pool = (v) => {
+    if (!Array.isArray(v) || v.length === 0) return null;
+    const valid = v.filter(isChannelValidAndActive);
+    // 如果 KV 保存的旧候选池含有已下架/死通道，或有效模型少于 5 个，直接废弃旧缓存并回退到最新内置精选池
+    if (valid.length < 5 || v.some(c => !isChannelValidAndActive(c))) return null;
+    return valid;
+  };
   const cfg = {
     disabled_channels: Array.isArray(saved.disabled_channels) ? saved.disabled_channels : [],
     auto_pool: pool(saved.auto_pool),
@@ -543,6 +554,19 @@ function getProviderApiKey(providerInfo) {
     }
   }
   return providerInfo.apiKey || "";
+}
+
+// 严格校验渠道是否真实有效且可用 (防已下架提供商、死通道、空 Key 渗透入路由池)
+function isChannelValidAndActive(c) {
+  if (!c || !c.provider || !c.model) return false;
+  const mLower = c.model.toLowerCase();
+  if (AUTO_EXCLUDED_MODELS.has(mLower)) return false;
+  const pInfo = CONFIG.PROVIDERS[c.provider];
+  if (!pInfo) return false;
+  if (!Array.isArray(pInfo.models) || pInfo.models.length === 0) return false;
+  const apiKey = getProviderApiKey(pInfo);
+  if (!apiKey && c.provider !== "cloudflare") return false;
+  return pInfo.models.some(m => m.toLowerCase() === mLower);
 }
 
 // API Key 运行时管理: KV 持久化的签发层与内置 USER_KEYS 合并 (KV 优先), 附带内存微缓存降低高频鉴权开销
@@ -1451,11 +1475,11 @@ function deriveProvidersFromModels(models) {
     "deepseek-v4-pro": "sensenova",
     "hy3": "bai",
     "mimo-v2.5": "bai",
-    "glm-5.3-flash": "volces",
+    "glm-5.3-flash": "zhipu",
     "grok-4.6": "bai",
     "grok-4.5": "bai",
     "deepseek-v4-flash-vision-exp": "amd",
-    "deepseek-v4.1-flash": "volces",
+    "deepseek-v4.1-flash": "sensenova",
     "qwen3.8-flash-next": "amd",
     "minicpm5-2b": "amd",
     "mimo-v2.6-flash": "mimo",
@@ -2141,8 +2165,9 @@ ${metrics.models.slice(0, 5).map((m, idx) => `${idx + 1}. **\`${m.model}\`** (�
 
 async function callInternalAi(env, runtimeCfg, messages) {
   const channelHealth = await getChannelHealth(env);
-  const pool = (runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES);
-  const openChannels = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, pool));
+  const rawPool = runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES;
+  const pool = rawPool.filter(isChannelValidAndActive);
+  const openChannels = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, pool.length > 0 ? pool : CONFIG.AUTO_CANDIDATES.filter(isChannelValidAndActive)));
   
   const candidates = [
     ...openChannels.filter(c => c.provider === "atria"),
@@ -4082,7 +4107,10 @@ export default {
 
       if (isAutoPoolOnly) {
         const rawPool = runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES;
-        const basePool = rawPool.filter(c => !AUTO_EXCLUDED_MODELS.has(c.model.toLowerCase()) && c.provider !== "cloudflare");
+        let basePool = rawPool.filter(c => isChannelValidAndActive(c) && c.provider !== "cloudflare");
+        if (basePool.length < 5) {
+          basePool = CONFIG.AUTO_CANDIDATES.filter(c => isChannelValidAndActive(c) && c.provider !== "cloudflare");
+        }
         const activePool = filterDisabledChannels(runtimeCfg, basePool);
 
         const includeAuto = url.searchParams.get("include_auto") !== "false" && url.searchParams.get("include_auto") !== "0";
@@ -4223,7 +4251,10 @@ export default {
           } else {
             rawPool = runtimeCfg.auto_pool || CONFIG.AUTO_CANDIDATES;
           }
-          let basePool = rawPool.filter(c => !AUTO_EXCLUDED_MODELS.has(c.model.toLowerCase()) && c.provider !== "cloudflare");
+          let basePool = rawPool.filter(c => isChannelValidAndActive(c) && c.provider !== "cloudflare");
+          if (basePool.length < 5 && !isMultimodalPool && !isAllPool) {
+            basePool = CONFIG.AUTO_CANDIDATES.filter(c => isChannelValidAndActive(c) && c.provider !== "cloudflare");
+          }
           if (explicitProvider) {
             basePool = basePool.filter(c => c.provider === explicitProvider);
           }
@@ -4265,13 +4296,24 @@ export default {
           // 严禁跨模型切换：用户显式指定具体模型时，仅在支持该具体模型的 Provider 之间做同模型故障转移，绝不切换为其他模型！
           const targetLower = targetModel.toLowerCase();
           const registeredChannels = [];
-          for (const [pKey, pVal] of Object.entries(CONFIG.PROVIDERS)) {
-            if (explicitProvider && pKey !== explicitProvider) {
-              continue;
-            }
-            const matchedModel = pVal.models.find(m => m.toLowerCase() === targetLower);
-            if (matchedModel) {
-              registeredChannels.push({ provider: pKey, model: matchedModel });
+
+          // 优雅别名降级：针对已下架停用的旧模型，透明映射至可用的高可用对应同系列/替代模型 (向后兼容历史调用方与平台定时任务)
+          if (targetLower === "glm-5.3-flash" || targetLower === "glm-5.3") {
+            registeredChannels.push({ provider: "zhipu", model: "glm-4.7-flash" });
+            registeredChannels.push({ provider: "sensenova", model: "glm-5.2" });
+          } else if (targetLower === "deepseek-v4.1-flash") {
+            registeredChannels.push({ provider: "sensenova", model: "deepseek-v4-flash" });
+            registeredChannels.push({ provider: "eaglesine", model: "DeepSeek-V4-Flash" });
+            registeredChannels.push({ provider: "amd", model: "DeepSeek-V4-Flash" });
+          } else {
+            for (const [pKey, pVal] of Object.entries(CONFIG.PROVIDERS)) {
+              if (explicitProvider && pKey !== explicitProvider) {
+                continue;
+              }
+              const matchedModel = pVal.models.find(m => m.toLowerCase() === targetLower);
+              if (matchedModel) {
+                registeredChannels.push({ provider: pKey, model: matchedModel });
+              }
             }
           }
           candidates = filterOpenChannels(channelHealth, filterDisabledChannels(runtimeCfg, registeredChannels));
