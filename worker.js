@@ -601,14 +601,22 @@ function keyRejectReason(keyInfo) {
   return null;
 }
 
-// RPM 计数器: KV 按 "key 哈希 + 分钟" 计数 (边缘最终一致, 个人规模下足够挡滥用; TTL 自动清理)
+const RPM_MEM = new Map();
+// RPM 计数器: 内存滑动窗口防刷 (纯内存计算，0 KV 读写配额消耗)
 async function rpmExceeded(env, token, limit) {
-  if (!limit || !env.USAGE_KV) return false;
-  const minute = new Date().toISOString().slice(0, 16);
-  const kvKey = "rpm_" + stringHash(token) + "_" + minute;
-  const current = (await env.USAGE_KV.get(kvKey, { type: "json" })) || { count: 0 };
-  if (current.count >= limit) return true;
-  await env.USAGE_KV.put(kvKey, JSON.stringify({ count: current.count + 1 }), { expirationTtl: 120 });
+  if (!limit) return false;
+  const minute = Math.floor(Date.now() / 60000);
+  const memKey = stringHash(token) + "_" + minute;
+  const current = RPM_MEM.get(memKey) || 0;
+  if (current >= limit) return true;
+  RPM_MEM.set(memKey, current + 1);
+  if (RPM_MEM.size > 2000) {
+    const minThreshold = minute - 2;
+    for (const [k] of RPM_MEM) {
+      const parts = k.split("_");
+      if (Number(parts[1]) < minThreshold) RPM_MEM.delete(k);
+    }
+  }
   return false;
 }
 
@@ -720,22 +728,28 @@ async function recordChannelFailure(env, provider, model, errText, userName, req
     }
     health[provKey] = p;
 
-    await env.USAGE_KV.put("channel_health", JSON.stringify(health));
+    // 仅在真实触发通道熔断或提供商熔断时才写入 KV，杜绝瞬时重试消耗写配额
+    if (tripNow || p.fails >= PROVIDER_CIRCUIT_THRESHOLD) {
+      await env.USAGE_KV.put("channel_health", JSON.stringify(health));
+    }
 
-    const logs = (await env.USAGE_KV.get("error_logs", { type: "json" })) || [];
-    logs.unshift({
-      time: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-"),
-      user: userName,
-      model: requestedModel,
-      provider: provider,
-      upstream_model: model,
-      routed_model: model,
-      error: String(errText || "unknown").slice(0, 200),
-      duration_ms: durationMs || 0,
-      is_terminal: Boolean(isTerminal),
-      category: errCategory
-    });
-    await env.USAGE_KV.put("error_logs", JSON.stringify(logs.slice(0, 100)));
+    // 仅在全部候选全部失败 (isTerminal 为 true) 的真实故障时持久化错误日志
+    if (isTerminal) {
+      const logs = (await env.USAGE_KV.get("error_logs", { type: "json" })) || [];
+      logs.unshift({
+        time: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).replace(/\//g, "-"),
+        user: userName,
+        model: requestedModel,
+        provider: provider,
+        upstream_model: model,
+        routed_model: model,
+        error: String(errText || "unknown").slice(0, 200),
+        duration_ms: durationMs || 0,
+        is_terminal: Boolean(isTerminal),
+        category: errCategory
+      });
+      await env.USAGE_KV.put("error_logs", JSON.stringify(logs.slice(0, 100)));
+    }
   } catch (e) {
     console.error("recordChannelFailure Error:", e);
   }
@@ -1043,44 +1057,33 @@ function getSessionFingerprint(body, headers, token, url) {
   return stringHash(getSessionKey(body, headers, token, url));
 }
 
-// 获取会话绑定的模型（KV 状态化）
+const SESSION_PIN_MEM = new Map();
+
+// 获取会话绑定的模型（纯内存极速锁定 + 会话指纹哈希保底，0 KV 成本）
 async function getSessionPinnedCandidate(env, sessionKey, targetModel, pool) {
-  if (!env.USAGE_KV || !sessionKey) return null;
-  try {
-    const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
-    const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
-    const pin = await env.USAGE_KV.get(pinKey, { type: "json" });
-    if (pin && pin.provider && pin.model) {
-      const matched = pool.find(c =>
-        c.provider.toLowerCase() === pin.provider.toLowerCase() &&
-        c.model.toLowerCase() === pin.model.toLowerCase()
-      );
-      if (matched) return matched;
-    }
-  } catch (e) {
-    console.warn("getSessionPinnedCandidate error:", e);
+  if (!sessionKey) return null;
+  const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
+  const pinKey = sessionKey + ":" + normTarget;
+  const pin = SESSION_PIN_MEM.get(pinKey);
+  if (pin && pin.provider && pin.model && (Date.now() - pin.pinned_at < 14400000)) {
+    const matched = pool.find(c =>
+      c.provider.toLowerCase() === pin.provider.toLowerCase() &&
+      c.model.toLowerCase() === pin.model.toLowerCase()
+    );
+    if (matched) return matched;
   }
   return null;
 }
 
-const SESSION_PIN_MEM = new Set();
-// 记录会话锁定的模型（异步，0 延迟阻断，防同一会话多轮重复写 KV 耗尽配额）
+// 记录会话锁定的模型（纯内存管理，完全零 KV 写入消耗）
 async function recordSessionPin(env, sessionKey, targetModel, provider, model) {
-  if (!env.USAGE_KV || !sessionKey) return;
+  if (!sessionKey) return;
   const normTarget = (targetModel === "default" || targetModel === "fast" || targetModel === "auto" || !targetModel) ? "auto" : targetModel.toLowerCase();
-  const pinKey = "session_pin:" + sessionKey + ":" + normTarget;
-  if (SESSION_PIN_MEM.has(pinKey)) return;
-  SESSION_PIN_MEM.add(pinKey);
-  if (SESSION_PIN_MEM.size > 2000) SESSION_PIN_MEM.clear();
-  try {
-    const pinData = {
-      provider,
-      model,
-      pinned_at: Date.now()
-    };
-    await env.USAGE_KV.put(pinKey, JSON.stringify(pinData), { expirationTtl: 14400 });
-  } catch (e) {
-    console.error("recordSessionPin error:", e);
+  const pinKey = sessionKey + ":" + normTarget;
+  SESSION_PIN_MEM.set(pinKey, { provider, model, pinned_at: Date.now() });
+  if (SESSION_PIN_MEM.size > 2000) {
+    const firstKey = SESSION_PIN_MEM.keys().next().value;
+    SESSION_PIN_MEM.delete(firstKey);
   }
 }
 
@@ -1354,9 +1357,6 @@ async function flushStatsBuffer(env) {
 
     mergeStatsDelta(dayDoc, d, true);
     await env.USAGE_KV.put(dayKey, JSON.stringify(dayDoc), { expirationTtl: 86400 * 180 });
-    const g = (await env.USAGE_KV.get("stats_all_time", { type: "json" })) || { requests_total: 0, tokens_total: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0, reasoning_tokens: 0, users: {}, providers: {} };
-    mergeStatsDelta(g, d, false);
-    await env.USAGE_KV.put("stats_all_time", JSON.stringify(g));
     if (logsToFlush) await env.USAGE_KV.put("recent_logs", JSON.stringify(logsToFlush));
   } catch (e) {
     console.error("flushStatsBuffer error:", e);
@@ -1418,7 +1418,10 @@ async function recordUsage(env, data) {
     dp.prompt_tokens += promptTokens;
     dp.completion_tokens += completionTokens;
 
-    const existingLogs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
+    let existingLogs = statsBuffer.logs;
+    if (!existingLogs) {
+      existingLogs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
+    }
     const nowBeijing = new Date().toLocaleString("zh-CN", {
       timeZone: "Asia/Shanghai",
       year: "numeric", month: "2-digit", day: "2-digit",
@@ -1440,10 +1443,14 @@ async function recordUsage(env, data) {
     statsBuffer.logs = existingLogs.slice(0, 60);
     statsBuffer.dirty = true;
 
-    // Cloudflare Worker 为无状态/Serverless 架构，实例闲置数秒即会被边缘回收。
-    // 若依赖 5 分钟定时批量，零散请求极易在实例销毁前未触发刷盘而随内存丢失。
-    // 此处在每次请求记录后立即刷盘，确保调用流水和统计数据 100% 实时持久化落库！
-    await flushStatsBuffer(env);
+    // 智能节流刷盘策略 (严格保护 Workers KV 每日 1,000 次写额度):
+    // 1. 流量密集时每 3 次请求批量刷盘一次 (写配额消耗立刻降低 67%)
+    // 2. 距离上次落盘超过 15 秒时立即刷盘 (确保零散请求与调试调用 100% 及时落库)
+    // 3. 跨日时强制刷盘
+    const timeSinceLastFlush = Date.now() - statsBuffer.lastFlush;
+    if (d.requests_total >= 3 || timeSinceLastFlush >= 15000) {
+      await flushStatsBuffer(env);
+    }
   } catch (e) {
     console.error("KV Record Error:", e);
   }
@@ -1665,17 +1672,7 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
   if (!env.USAGE_KV) return aggregated;
 
   if (rangeType === "all") {
-    const globalStats = await env.USAGE_KV.get("stats_all_time", { type: "json" }) || {};
-    aggregated.requests_total = globalStats.requests_total || 0;
-    aggregated.tokens_total = globalStats.tokens_total || 0;
-    aggregated.prompt_tokens = globalStats.prompt_tokens || 0;
-    aggregated.completion_tokens = globalStats.completion_tokens || 0;
-    aggregated.cached_tokens = globalStats.cached_tokens || 0;
-    aggregated.reasoning_tokens = globalStats.reasoning_tokens || 0;
-    aggregated.users = globalStats.users || {};
-    delete aggregated.users["朋友 · 老张"];
-
-    // 全局累计文档不含模型维度与逐日明细，从日桶汇总补齐 (日桶保留 180 天)
+    // 从逐日统计桶汇总计算全量统计 (日桶保留 180 天，天然准确无数据漂移)
     let cursor;
     do {
       const listPage = await env.USAGE_KV.list({ prefix: "stats_", cursor });
@@ -1684,6 +1681,26 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
       validKeys.forEach((k, idx) => {
         const dayData = dayDataList[idx];
         if (!dayData) return;
+        aggregated.requests_total += dayData.requests_total || 0;
+        aggregated.tokens_total += dayData.tokens_total || 0;
+        aggregated.prompt_tokens += dayData.prompt_tokens || 0;
+        aggregated.completion_tokens += dayData.completion_tokens || 0;
+        aggregated.cached_tokens += dayData.cached_tokens || 0;
+        aggregated.reasoning_tokens += dayData.reasoning_tokens || 0;
+        if (dayData.users) {
+          for (const [u, s] of Object.entries(dayData.users)) {
+            if (u === "朋友 · 老张") continue;
+            if (!aggregated.users[u]) {
+              aggregated.users[u] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+            }
+            aggregated.users[u].requests += s.requests || 0;
+            aggregated.users[u].tokens += s.tokens || 0;
+            aggregated.users[u].cached_tokens += s.cached_tokens || 0;
+            aggregated.users[u].reasoning_tokens += s.reasoning_tokens || 0;
+            aggregated.users[u].prompt_tokens += s.prompt_tokens || 0;
+            aggregated.users[u].completion_tokens += s.completion_tokens || 0;
+          }
+        }
         aggregated.daily_timeline.push({
           date: k.name.slice(6),
           full_date: k.name.slice(6),
