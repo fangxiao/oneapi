@@ -4644,10 +4644,12 @@ export default {
             if (explicitProvider) {
               candidates = [{ provider: explicitProvider, model: targetModel }];
             } else {
-              // 未在已知提供商列表显式声明的未知模型，尝试透传至主 Provider (eaglesine)，不塞入任何其他无关模型
-              candidates = [{ provider: "eaglesine", model: targetModel }];
+              return new Response(JSON.stringify({
+                error: { message: `模型 '${rawModel}' 不存在或未被网关收录，请在 /docs 中查看支持的模型或使用 'auto'。`, type: "invalid_request_error", code: "model_not_found" }
+              }), { status: 404, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
             }
-          } else if (candidates.length > 1) {
+          }
+ else if (candidates.length > 1) {
             // 多提供商同模型粘性锁定
             const pinnedCandidate = await getSessionPinnedCandidate(env, sessionKey, targetModel, candidates);
             if (pinnedCandidate) {
