@@ -1363,19 +1363,98 @@ async function flushStatsBuffer(env) {
   }
 }
 
-async function recordUsage(env, data) {
-  if (!env.USAGE_KV) return;
+// ==========================================
+// 📊 Cloudflare D1 高性能用量日志与实时统计引擎 (100x 写入配额)
+// ==========================================
+
+// 从 D1 计算某一天的实时统计快照 (单次 Batch 批量聚合，~2ms 极速响应)
+async function getDayStatsFromUsageLogs(db, dateStr) {
   try {
-    const today = getBeijingDateStr();
-    if (statsBuffer.date !== today) {
-      if (statsBuffer.date !== null && statsBuffer.dirty) {
-        await flushStatsBuffer(env);
-      }
-      statsBuffer.date = today;
-      statsBuffer.delta = emptyStatsDelta();
-      statsBuffer.dirty = false;
+    const [totalRes, modelsRes, usersRes, providersRes] = await db.batch([
+      db.prepare(`SELECT COUNT(*) as requests_total, COALESCE(SUM(total_tokens), 0) as tokens_total, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens, COALESCE(SUM(cached_tokens), 0) as cached_tokens, COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens FROM usage_logs WHERE date = ?`).bind(dateStr),
+      db.prepare(`SELECT model, COUNT(*) as requests, COALESCE(SUM(total_tokens), 0) as tokens, COALESCE(SUM(cached_tokens), 0) as cached_tokens, COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens FROM usage_logs WHERE date = ? GROUP BY model`).bind(dateStr),
+      db.prepare(`SELECT user, COUNT(*) as requests, COALESCE(SUM(total_tokens), 0) as tokens, COALESCE(SUM(cached_tokens), 0) as cached_tokens, COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens FROM usage_logs WHERE date = ? GROUP BY user`).bind(dateStr),
+      db.prepare(`SELECT provider, COUNT(*) as requests, COALESCE(SUM(total_tokens), 0) as tokens, COALESCE(SUM(cached_tokens), 0) as cached_tokens, COALESCE(SUM(reasoning_tokens), 0) as reasoning_tokens, COALESCE(SUM(prompt_tokens), 0) as prompt_tokens, COALESCE(SUM(completion_tokens), 0) as completion_tokens FROM usage_logs WHERE date = ? GROUP BY provider`).bind(dateStr)
+    ]);
+
+    const summary = (totalRes.results && totalRes.results[0]) || {};
+    const models = {};
+    for (const m of (modelsRes.results || [])) {
+      models[m.model] = {
+        requests: m.requests || 0,
+        tokens: m.tokens || 0,
+        cached_tokens: m.cached_tokens || 0,
+        reasoning_tokens: m.reasoning_tokens || 0,
+        prompt_tokens: m.prompt_tokens || 0,
+        completion_tokens: m.completion_tokens || 0
+      };
+    }
+    const users = {};
+    for (const u of (usersRes.results || [])) {
+      if (u.user === "朋友 · 老张") continue;
+      users[u.user] = {
+        requests: u.requests || 0,
+        tokens: u.tokens || 0,
+        cached_tokens: u.cached_tokens || 0,
+        reasoning_tokens: u.reasoning_tokens || 0,
+        prompt_tokens: u.prompt_tokens || 0,
+        completion_tokens: u.completion_tokens || 0
+      };
+    }
+    const providers = {};
+    for (const p of (providersRes.results || [])) {
+      providers[p.provider] = {
+        requests: p.requests || 0,
+        tokens: p.tokens || 0,
+        cached_tokens: p.cached_tokens || 0,
+        reasoning_tokens: p.reasoning_tokens || 0,
+        prompt_tokens: p.prompt_tokens || 0,
+        completion_tokens: p.completion_tokens || 0
+      };
     }
 
+    return {
+      date: dateStr,
+      requests_total: summary.requests_total || 0,
+      tokens_total: summary.tokens_total || 0,
+      prompt_tokens: summary.prompt_tokens || 0,
+      completion_tokens: summary.completion_tokens || 0,
+      cached_tokens: summary.cached_tokens || 0,
+      reasoning_tokens: summary.reasoning_tokens || 0,
+      models,
+      users,
+      providers
+    };
+  } catch (err) {
+    console.error("getDayStatsFromUsageLogs error:", err);
+    return null;
+  }
+}
+
+// 获取最近调用日志流 (优先查 D1 usage_logs, 兜底读 KV recent_logs)
+async function getRecentLogs(env) {
+  if (env.DB) {
+    try {
+      const { results } = await env.DB.prepare(
+        `SELECT time, user, model, routed_model, provider, total_tokens as tokens, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens, duration_ms, prompt, status FROM usage_logs ORDER BY id DESC LIMIT 60`
+      ).all();
+      if (results && results.length > 0) {
+        return results;
+      }
+    } catch (e) {
+      console.error("D1 getRecentLogs error:", e);
+    }
+  }
+  if (env.USAGE_KV) {
+    return (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
+  }
+  return [];
+}
+
+async function recordUsage(env, data) {
+  if (!env.DB && !env.USAGE_KV) return;
+  try {
+    const today = getBeijingDateStr();
     // 统计模型分布时，优先记录真实路由落地的模型（如 auto/fast/all 路由到底层模型的真实负载），便于精准审计
     const model = data.routed_model || data.model || "unknown";
     const userName = data.user || "管理员 (本人)";
@@ -1386,75 +1465,118 @@ async function recordUsage(env, data) {
     const reasoningTokens = data.reasoning_tokens || 0;
     const totalTokens = promptTokens + completionTokens;
 
-    const d = statsBuffer.delta;
-    d.requests_total += 1;
-    d.tokens_total += totalTokens;
-    d.prompt_tokens += promptTokens;
-    d.completion_tokens += completionTokens;
-    d.cached_tokens += cachedTokens;
-    d.reasoning_tokens += reasoningTokens;
-    if (!d.models[model]) d.models[model] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
-    const dm = d.models[model];
-    dm.requests += 1;
-    dm.tokens += totalTokens;
-    dm.cached_tokens += cachedTokens;
-    dm.reasoning_tokens += reasoningTokens;
-    dm.prompt_tokens += promptTokens;
-    dm.completion_tokens += completionTokens;
-    if (!d.users[userName]) d.users[userName] = { requests: 0, tokens: 0, cached_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
-    const du = d.users[userName];
-    du.requests += 1;
-    du.tokens += totalTokens;
-    du.cached_tokens += cachedTokens;
-    du.prompt_tokens += promptTokens;
-    du.completion_tokens += completionTokens;
-    if (!d.providers) d.providers = {};
-    if (!d.providers[provider]) d.providers[provider] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
-    const dp = d.providers[provider];
-    dp.requests += 1;
-    dp.tokens += totalTokens;
-    dp.cached_tokens += cachedTokens;
-    dp.reasoning_tokens += reasoningTokens;
-    dp.prompt_tokens += promptTokens;
-    dp.completion_tokens += completionTokens;
-
-    let existingLogs = statsBuffer.logs;
-    if (!existingLogs) {
-      existingLogs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
-    }
     const nowBeijing = new Date().toLocaleString("zh-CN", {
       timeZone: "Asia/Shanghai",
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
     }).replace(/\//g, "-");
-    existingLogs.unshift({
-      time: nowBeijing,
-      user: userName,
-      model: model,
-      routed_model: data.routed_model || model,
-      provider: data.provider || "auto",
-      tokens: totalTokens,
-      cached_tokens: cachedTokens,
-      reasoning_tokens: reasoningTokens,
-      duration_ms: data.duration_ms || 0,
-      prompt: data.prompt || "",
-      status: "200 OK"
-    });
-    statsBuffer.logs = existingLogs.slice(0, 60);
-    statsBuffer.dirty = true;
 
-    // 智能节流刷盘策略 (严格保护 Workers KV 每日 1,000 次写额度):
-    // 1. 流量密集时每 3 次请求批量刷盘一次 (写配额消耗立刻降低 67%)
-    // 2. 距离上次落盘超过 15 秒时立即刷盘 (确保零散请求与调试调用 100% 及时落库)
-    // 3. 跨日时强制刷盘
-    const timeSinceLastFlush = Date.now() - statsBuffer.lastFlush;
-    if (d.requests_total >= 3 || timeSinceLastFlush >= 15000) {
-      await flushStatsBuffer(env);
+    // 1. 优先写入 Cloudflare D1 (env.DB): 每日 100,000 次免费写入配额，彻底解除 KV 1,000 次限制
+    if (env.DB) {
+      try {
+        await env.DB.prepare(
+          `INSERT INTO usage_logs (time, date, user, model, routed_model, provider, prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens, duration_ms, prompt, status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+          nowBeijing,
+          today,
+          userName,
+          data.model || model,
+          data.routed_model || model,
+          provider,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          cachedTokens,
+          reasoningTokens,
+          data.duration_ms || 0,
+          data.prompt || "",
+          "200 OK",
+          Date.now()
+        ).run();
+        return; // D1 写入成功后直接返回，完全不再消耗任何 KV 写额度
+      } catch (dbErr) {
+        console.error("D1 recordUsage error, falling back to KV:", dbErr);
+      }
+    }
+
+    // 2. 兜底回退：若未配置 D1 或 D1 写入异常，走原有 KV 缓冲与刷盘
+    if (env.USAGE_KV) {
+      if (statsBuffer.date !== today) {
+        if (statsBuffer.date !== null && statsBuffer.dirty) {
+          await flushStatsBuffer(env);
+        }
+        statsBuffer.date = today;
+        statsBuffer.delta = emptyStatsDelta();
+        statsBuffer.dirty = false;
+      }
+
+      const d = statsBuffer.delta;
+      d.requests_total += 1;
+      d.tokens_total += totalTokens;
+      d.prompt_tokens += promptTokens;
+      d.completion_tokens += completionTokens;
+      d.cached_tokens += cachedTokens;
+      d.reasoning_tokens += reasoningTokens;
+      if (!d.models[model]) d.models[model] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      const dm = d.models[model];
+      dm.requests += 1;
+      dm.tokens += totalTokens;
+      dm.cached_tokens += cachedTokens;
+      dm.reasoning_tokens += reasoningTokens;
+      dm.prompt_tokens += promptTokens;
+      dm.completion_tokens += completionTokens;
+      if (!d.users[userName]) d.users[userName] = { requests: 0, tokens: 0, cached_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      const du = d.users[userName];
+      du.requests += 1;
+      du.tokens += totalTokens;
+      du.cached_tokens += cachedTokens;
+      du.prompt_tokens += promptTokens;
+      du.completion_tokens += completionTokens;
+      if (!d.providers) d.providers = {};
+      if (!d.providers[provider]) d.providers[provider] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      const dp = d.providers[provider];
+      dp.requests += 1;
+      dp.tokens += totalTokens;
+      dp.cached_tokens += cachedTokens;
+      dp.reasoning_tokens += reasoningTokens;
+      dp.prompt_tokens += promptTokens;
+      dp.completion_tokens += completionTokens;
+
+      let existingLogs = statsBuffer.logs;
+      if (!existingLogs) {
+        existingLogs = (await env.USAGE_KV.get("recent_logs", { type: "json" })) || [];
+      }
+      existingLogs.unshift({
+        time: nowBeijing,
+        user: userName,
+        model: model,
+        routed_model: data.routed_model || model,
+        provider: data.provider || "auto",
+        tokens: totalTokens,
+        cached_tokens: cachedTokens,
+        reasoning_tokens: reasoningTokens,
+        duration_ms: data.duration_ms || 0,
+        prompt: data.prompt || "",
+        status: "200 OK"
+      });
+      statsBuffer.logs = existingLogs.slice(0, 60);
+      statsBuffer.dirty = true;
+
+      // 智能节流刷盘策略 (严格保护 Workers KV 每日 1,000 次写额度):
+      // 1. 流量密集时每 3 次请求批量刷盘一次 (写配额消耗立刻降低 67%)
+      // 2. 距离上次落盘超过 15 秒时立即刷盘 (确保零散请求与调试调用 100% 及时落库)
+      // 3. 跨日时强制刷盘
+      const timeSinceLastFlush = Date.now() - statsBuffer.lastFlush;
+      if (d.requests_total >= 3 || timeSinceLastFlush >= 15000) {
+        await flushStatsBuffer(env);
+      }
     }
   } catch (e) {
     console.error("KV Record Error:", e);
   }
 }
+
 
 // 辅助：获取日期列表
 function getDateRangeArray(startDateStr, endDateStr) {
@@ -1605,6 +1727,75 @@ function mergeLiveDeltaToAggregated(aggregated, d) {
 const STATS_MEM_CACHE = new Map();
 const STATS_MEM_TTL_MS = 20000;
 
+// 标准化合并任意一天（无论是从 D1 实时聚合、D1 daily_stats 还是 KV stats_*）的数据到 aggregated 对象中
+function mergeDayDocIntoAggregated(aggregated, dayData, dStr) {
+  if (!dayData) return;
+  const fullDate = dStr || dayData.date || "";
+  const shortDate = fullDate.length >= 10 ? fullDate.slice(5) : fullDate;
+  aggregated.requests_total += dayData.requests_total || 0;
+  aggregated.tokens_total += dayData.tokens_total || 0;
+  aggregated.prompt_tokens += dayData.prompt_tokens || 0;
+  aggregated.completion_tokens += dayData.completion_tokens || 0;
+  aggregated.cached_tokens += dayData.cached_tokens || 0;
+  aggregated.reasoning_tokens += dayData.reasoning_tokens || 0;
+
+  if (fullDate) {
+    aggregated.daily_timeline.push({
+      date: shortDate,
+      full_date: fullDate,
+      tokens: dayData.tokens_total || 0,
+      requests: dayData.requests_total || 0,
+      prompt_tokens: dayData.prompt_tokens || 0,
+      completion_tokens: dayData.completion_tokens || 0,
+      cached_tokens: dayData.cached_tokens || 0
+    });
+  }
+
+  if (dayData.users) {
+    for (const [u, s] of Object.entries(dayData.users)) {
+      if (u === "朋友 · 老张") continue;
+      if (!aggregated.users[u]) {
+        aggregated.users[u] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      }
+      aggregated.users[u].requests += s.requests || 0;
+      aggregated.users[u].tokens += s.tokens || 0;
+      aggregated.users[u].cached_tokens += s.cached_tokens || 0;
+      aggregated.users[u].reasoning_tokens += s.reasoning_tokens || 0;
+      aggregated.users[u].prompt_tokens += s.prompt_tokens || 0;
+      aggregated.users[u].completion_tokens += s.completion_tokens || 0;
+    }
+  }
+
+  if (dayData.models) {
+    for (const [m, s] of Object.entries(dayData.models)) {
+      if (!aggregated.models[m]) {
+        aggregated.models[m] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      }
+      aggregated.models[m].requests += s.requests || 0;
+      aggregated.models[m].tokens += s.tokens || 0;
+      aggregated.models[m].cached_tokens += s.cached_tokens || 0;
+      aggregated.models[m].reasoning_tokens += s.reasoning_tokens || 0;
+      aggregated.models[m].prompt_tokens += s.prompt_tokens || 0;
+      aggregated.models[m].completion_tokens += s.completion_tokens || 0;
+    }
+  }
+
+  const dayProviders = dayData.providers || deriveProvidersFromModels(dayData.models);
+  if (dayProviders) {
+    for (const [p, s] of Object.entries(dayProviders)) {
+      if (!aggregated.providers[p]) {
+        aggregated.providers[p] = { requests: 0, tokens: 0, cached_tokens: 0, reasoning_tokens: 0, prompt_tokens: 0, completion_tokens: 0 };
+      }
+      aggregated.providers[p].requests += s.requests || 0;
+      aggregated.providers[p].tokens += s.tokens || 0;
+      aggregated.providers[p].cached_tokens += s.cached_tokens || 0;
+      aggregated.providers[p].reasoning_tokens += s.reasoning_tokens || 0;
+      aggregated.providers[p].prompt_tokens += s.prompt_tokens || 0;
+      aggregated.providers[p].completion_tokens += s.completion_tokens || 0;
+    }
+  }
+}
+
 // 聚合数据
 async function aggregateStats(env, rangeType, customStart, customEnd) {
   const cacheKey = (rangeType || "today") + "_" + (customStart || "") + "_" + (customEnd || "");
@@ -1669,7 +1860,106 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
     daily_timeline: []
   };
 
+  if (!env.DB && !env.USAGE_KV) return aggregated;
+
+  // 1. 如果绑定了 Cloudflare D1 (env.DB)，优先走 D1 高性能查询 (0 KV 读写配额消耗)
+  if (env.DB) {
+    try {
+      if (rangeType === "all") {
+        const { results: histDays } = await env.DB.prepare(
+          "SELECT date, data_json FROM daily_stats ORDER BY date ASC"
+        ).all();
+        if (histDays) {
+          for (const row of histDays) {
+            try {
+              if (row.date === todayStr) continue; // 今天的实时数据由 usage_logs 聚合提供，避免重复累加
+              const dayDoc = JSON.parse(row.data_json);
+              mergeDayDocIntoAggregated(aggregated, dayDoc, row.date);
+            } catch (e) {}
+          }
+        }
+        const todayLiveStats = await getDayStatsFromUsageLogs(env.DB, todayStr);
+        if (todayLiveStats && todayLiveStats.requests_total > 0) {
+          mergeDayDocIntoAggregated(aggregated, todayLiveStats, todayStr);
+        } else if (histDays) {
+          const todayRow = histDays.find(r => r.date === todayStr);
+          if (todayRow) {
+            try { mergeDayDocIntoAggregated(aggregated, JSON.parse(todayRow.data_json), todayStr); } catch (e) {}
+          }
+        }
+        aggregated.daily_timeline.sort((a, b) => a.full_date.localeCompare(b.full_date));
+        aggregated.active_users_count = Object.keys(aggregated.users).length;
+        STATS_MEM_CACHE.set(cacheKey, { ts: Date.now(), data: JSON.parse(JSON.stringify(aggregated)) });
+        return aggregated;
+      }
+
+      // 指定日期范围 (today, yesterday, 7d, 30d, custom)
+      const dateList = getDateRangeArray(startStr, endStr);
+      const { results: histDays } = await env.DB.prepare(
+        "SELECT date, data_json FROM daily_stats WHERE date >= ? AND date <= ? ORDER BY date ASC"
+      ).bind(startStr, endStr).all();
+      const histMap = new Map();
+      if (histDays) {
+        for (const row of histDays) {
+          try { histMap.set(row.date, JSON.parse(row.data_json)); } catch (e) {}
+        }
+      }
+
+      let todayLiveStats = null;
+      if (dateList.includes(todayStr)) {
+        todayLiveStats = await getDayStatsFromUsageLogs(env.DB, todayStr);
+      }
+
+      for (const dStr of dateList) {
+        if (dStr === todayStr) {
+          if (todayLiveStats && todayLiveStats.requests_total > 0) {
+            mergeDayDocIntoAggregated(aggregated, todayLiveStats, dStr);
+          } else if (histMap.has(dStr)) {
+            mergeDayDocIntoAggregated(aggregated, histMap.get(dStr), dStr);
+          } else {
+            aggregated.daily_timeline.push({
+              date: dStr.slice(5),
+              full_date: dStr,
+              tokens: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0
+            });
+          }
+        } else {
+          const histDoc = histMap.get(dStr);
+          if (histDoc) {
+            mergeDayDocIntoAggregated(aggregated, histDoc, dStr);
+          } else if (env.USAGE_KV) {
+            const kvDoc = await env.USAGE_KV.get("stats_" + dStr, { type: "json" });
+            if (kvDoc) {
+              mergeDayDocIntoAggregated(aggregated, kvDoc, dStr);
+            } else {
+              aggregated.daily_timeline.push({
+                date: dStr.slice(5),
+                full_date: dStr,
+                tokens: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0
+              });
+            }
+          } else {
+            aggregated.daily_timeline.push({
+              date: dStr.slice(5),
+              full_date: dStr,
+              tokens: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0
+            });
+          }
+        }
+      }
+
+      aggregated.daily_timeline.sort((a, b) => a.full_date.localeCompare(b.full_date));
+      aggregated.active_users_count = Object.keys(aggregated.users).length;
+      STATS_MEM_CACHE.set(cacheKey, { ts: Date.now(), data: JSON.parse(JSON.stringify(aggregated)) });
+      return aggregated;
+    } catch (d1Err) {
+      console.error("D1 aggregateStats error, falling back to KV:", d1Err);
+    }
+  }
+
+  // 2. 兜底回退：若未配置 D1 或 D1 查询失败，走原有 KV 汇总流程
   if (!env.USAGE_KV) return aggregated;
+
 
   if (rangeType === "all") {
     // 从逐日统计桶汇总计算全量统计 (日桶保留 180 天，天然准确无数据漂移)
@@ -3753,15 +4043,15 @@ export default {
       const needsStats = ["overview", "usage", "keys", "diagnosis"].includes(page);
       const isJson = url.searchParams.get("format") === "json" || request.headers.get("accept")?.includes("application/json");
 
-      const needsLogs = (page === "usage" || page === "diagnosis" || isJson) && Boolean(env.USAGE_KV);
+      const needsLogs = (page === "usage" || page === "diagnosis" || isJson) && Boolean(env.DB || env.USAGE_KV);
       const needsErrors = (page === "usage" || page === "diagnosis") && Boolean(env.USAGE_KV);
       const needsHealth = (page === "models" || page === "test" || page === "chat" || page === "diagnosis");
       const needsKeys = (page === "keys" || page === "overview" || isJson);
 
       const [stats, recentLogsRaw, recentErrorsRaw, apiKeys, channelHealth] = await Promise.all([
         needsStats ? aggregateStats(env, range, start, end) : null,
-        needsLogs ? env.USAGE_KV.get("recent_logs", { type: "json" }) : null,
-        needsErrors ? env.USAGE_KV.get("error_logs", { type: "json" }) : null,
+        needsLogs ? getRecentLogs(env) : null,
+        needsErrors ? (env.USAGE_KV ? env.USAGE_KV.get("error_logs", { type: "json" }) : null) : null,
         needsKeys ? getApiKeys(env) : null,
         needsHealth ? getChannelHealth(env) : null
       ]);
@@ -4106,16 +4396,27 @@ export default {
           error: { message: "请求过于频繁 (该 Key 限速 " + keyInfo.rpm_limit + " 次/分钟)，请稍后再试。", type: "rate_limit_error", code: "rate_limited" }
         }), { status: 429, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
       }
-      if (keyInfo.daily_token_limit && env.USAGE_KV) {
+      if (keyInfo.daily_token_limit && (env.DB || env.USAGE_KV)) {
         const todayStr = getBeijingDateStr();
-        const todayStats = await env.USAGE_KV.get("stats_" + todayStr, { type: "json" });
-        const usedToday = (todayStats && todayStats.users && todayStats.users[keyInfo.name] && todayStats.users[keyInfo.name].tokens) || 0;
+        let usedToday = 0;
+        if (env.DB) {
+          try {
+            const row = await env.DB.prepare(`SELECT COALESCE(SUM(total_tokens), 0) as used FROM usage_logs WHERE date = ? AND user = ?`).bind(todayStr, keyInfo.name).first();
+            usedToday = row ? (row.used || 0) : 0;
+          } catch (e) {
+            console.error("D1 check daily_token_limit error:", e);
+          }
+        } else if (env.USAGE_KV) {
+          const todayStats = await env.USAGE_KV.get("stats_" + todayStr, { type: "json" });
+          usedToday = (todayStats && todayStats.users && todayStats.users[keyInfo.name] && todayStats.users[keyInfo.name].tokens) || 0;
+        }
         if (usedToday >= keyInfo.daily_token_limit) {
           return new Response(JSON.stringify({
             error: { message: "该 Key 今日 token 配额已用尽 (" + usedToday + " / " + keyInfo.daily_token_limit + ")，明日恢复。", type: "rate_limit_error", code: "daily_quota_exceeded" }
           }), { status: 429, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
         }
       }
+
     }
 
     // 1. 模型列表端点 (/v1/models 或 /models)

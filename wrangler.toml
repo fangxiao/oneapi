@@ -13,3 +13,8 @@ id = "b6353982c0ea42e6a225790e0fd02f68"
 
 [ai]
 binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gateway-db"
+database_id = "b825f1ab-a3dd-4017-93ca-2cbf9d3a5423"
