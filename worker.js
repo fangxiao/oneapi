@@ -96,6 +96,8 @@ const CONFIG = {
       "cf-qwen3-30b": [0, 0],
       "cf-deepseek-r1-32b": [0, 0],
       "cf-glm-4.7-flash": [0, 0],
+      "mercury-2.5": [0.29, 1.08],
+      "mercury-2": [1.8, 5.4],
       "whisper-1": [0, 0]
     }
   },
@@ -117,7 +119,8 @@ const CONFIG = {
     agnes: "Agnes AI (ApiHub)",
     atria: "Atria (上海AI实验室 ASI)",
     unisound: "云知声 (Unisound)",
-    zhipu: "智谱AI (Zhipu BigModel)"
+    zhipu: "智谱AI (Zhipu BigModel)",
+    inception: "Inception Labs (Mercury dLLM)"
   },
 
   PROVIDERS: {
@@ -257,11 +260,17 @@ const CONFIG = {
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       apiKey: "07569269592b412f885894e6b67901b9.jWKWT2RClREaAaA1",
       models: ["glm-4.7-flash"]
+    },
+    inception: {
+      baseUrl: "https://api.inceptionlabs.ai/v1",
+      apiKey: "sk_ba649ac307b25f43a6869be65224eafe",
+      models: ["mercury-2.5", "mercury-2"]
     }
   },
 
   // ⚡ 极速精选把关池 (fast / auto / default): 准入门槛极高，推理极速，长上下文，高并发稳定性
   AUTO_CANDIDATES: [
+    { provider: "inception", model: "mercury-2.5" },
     { provider: "atria", model: "Atria-Dawn-Preview" },
     { provider: "longcat", model: "LongCat-2.5-Preview" },
     { provider: "mimo", model: "mimo-v2.6-flash" },
@@ -277,6 +286,8 @@ const CONFIG = {
 
   // 🌐 全量模型池 (all): 涵盖平台接入的所有可用对话模型 (大模型、Pro、专业模型全量分流)
   ALL_CANDIDATES: [
+    { provider: "inception", model: "mercury-2.5" },
+    { provider: "inception", model: "mercury-2" },
     { provider: "atria", model: "Atria-Dawn-Preview" },
     { provider: "longcat", model: "LongCat-2.5-Preview" },
     { provider: "mimo", model: "mimo-v2.6-flash" },
@@ -505,7 +516,8 @@ const PROVIDER_SECRET_NAMES = {
   agnes: "AGNES_API_KEY",
   atria: "ATRIA_API_KEY",
   unisound: "UNISOUND_API_KEY",
-  zhipu: "ZHIPU_API_KEY"
+  zhipu: "ZHIPU_API_KEY",
+  inception: "INCEPTION_API_KEY"
 };
 
 function applyProviderSecrets(env) {
@@ -1655,9 +1667,11 @@ function deriveProvidersFromModels(models) {
     "Atria-Dawn-Preview": "atria",
     "atria-dawn-preview": "atria",
     "u2-flash": "unisound",
-    "glm-4.7-flash": "zhipu"
+    "glm-4.7-flash": "zhipu",
+    "mercury-2.5": "inception",
+    "mercury-2": "inception"
   };
-  const autoShares = { atria: 0.15, longcat: 0.15, mimo: 0.15, unisound: 0.15, zhipu: 0.15, eaglesine: 0.15, sensenova: 0.10 };
+  const autoShares = { inception: 0.15, atria: 0.15, longcat: 0.15, mimo: 0.15, unisound: 0.10, zhipu: 0.10, eaglesine: 0.15, sensenova: 0.10 };
   const res = {};
   for (const [m, s] of Object.entries(models)) {
     const mLower = String(m || "").toLowerCase();
@@ -3989,7 +4003,7 @@ export default {
       const docsCfg = runtimeCfg;
       const channelTable = Object.entries(CONFIG.PROVIDERS).flatMap(([pKey, pVal]) => pVal.models.map(m => ({ provider: pKey, model: m })));
       const listedModels = [
-        "auto", "default", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
+        "auto", "default", "mercury-2.5", "mercury-2", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "u2-flash", "glm-4.7-flash",
         "Ling-3.0-flash", "Ling-3.1-flash", "Ling-2.6-flash",
         "agnes-3.0-flash", "agnes-2.5-flash", "agnes-image-2.5-flash",
@@ -4461,7 +4475,7 @@ export default {
       }
 
       const allModels = [
-        "auto", "fast", "all", "default", "multimodal", "image", "Ling-3.0-flash", "Ling-3.0-flash-VL", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
+        "auto", "fast", "all", "default", "multimodal", "image", "mercury-2.5", "mercury-2", "Ling-3.0-flash", "Ling-3.0-flash-VL", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
         "deepseek-v4-flash-0731", "deepseek-v4-flash-vision", "deepseek-v4-pro-0813",
         "agnes-3.0-flash", "agnes-2.5-flash", "agnes-2.0-flash", "agnes-3.0-flash-max", "agnes-2.5-pro",
         "agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash",
