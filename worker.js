@@ -1443,6 +1443,36 @@ async function getDayStatsFromUsageLogs(db, dateStr) {
   }
 }
 
+// 自动将 usage_logs 中已完结的历史日期同步归档入 daily_stats (自愈型归档，0 人工维护)
+async function ensureDailyStatsArchived(db, todayStr) {
+  try {
+    const { results } = await db.prepare(
+      "SELECT DISTINCT date FROM usage_logs WHERE date < ? AND date NOT IN (SELECT date FROM daily_stats) ORDER BY date ASC"
+    ).bind(todayStr).all();
+    if (!results || results.length === 0) return;
+    for (const r of results) {
+      if (!r.date) continue;
+      const dayDoc = await getDayStatsFromUsageLogs(db, r.date);
+      if (dayDoc && dayDoc.requests_total > 0) {
+        await db.prepare(
+          "INSERT OR REPLACE INTO daily_stats (date, requests_total, tokens_total, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        ).bind(
+          r.date,
+          dayDoc.requests_total || 0,
+          dayDoc.tokens_total || 0,
+          dayDoc.prompt_tokens || 0,
+          dayDoc.completion_tokens || 0,
+          dayDoc.cached_tokens || 0,
+          dayDoc.reasoning_tokens || 0,
+          JSON.stringify(dayDoc)
+        ).run();
+      }
+    }
+  } catch (e) {
+    console.error("ensureDailyStatsArchived error:", e);
+  }
+}
+
 // 获取最近调用日志流 (优先查 D1 usage_logs, 兜底读 KV recent_logs)
 async function getRecentLogs(env) {
   if (env.DB) {
@@ -1879,6 +1909,9 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
   // 1. 如果绑定了 Cloudflare D1 (env.DB)，优先走 D1 高性能查询 (0 KV 读写配额消耗)
   if (env.DB) {
     try {
+      // 启动自愈型归档：自动补齐 usage_logs 中存在但尚未存入 daily_stats 的历史日期
+      await ensureDailyStatsArchived(env.DB, todayStr);
+
       if (rangeType === "all") {
         const { results: histDays } = await env.DB.prepare(
           "SELECT date, data_json FROM daily_stats ORDER BY date ASC"
@@ -1938,20 +1971,31 @@ async function aggregateStats(env, rangeType, customStart, customEnd) {
             });
           }
         } else {
-          const histDoc = histMap.get(dStr);
-          if (histDoc) {
-            mergeDayDocIntoAggregated(aggregated, histDoc, dStr);
-          } else if (env.USAGE_KV) {
-            const kvDoc = await env.USAGE_KV.get("stats_" + dStr, { type: "json" });
-            if (kvDoc) {
-              mergeDayDocIntoAggregated(aggregated, kvDoc, dStr);
-            } else {
-              aggregated.daily_timeline.push({
-                date: dStr.slice(5),
-                full_date: dStr,
-                tokens: 0, requests: 0, prompt_tokens: 0, completion_tokens: 0, cached_tokens: 0
-              });
+          let histDoc = histMap.get(dStr);
+          if (!histDoc && env.DB) {
+            histDoc = await getDayStatsFromUsageLogs(env.DB, dStr);
+            if (histDoc && histDoc.requests_total > 0 && dStr < todayStr) {
+              try {
+                await env.DB.prepare(
+                  "INSERT OR REPLACE INTO daily_stats (date, requests_total, tokens_total, prompt_tokens, completion_tokens, cached_tokens, reasoning_tokens, data_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                ).bind(
+                  dStr,
+                  histDoc.requests_total || 0,
+                  histDoc.tokens_total || 0,
+                  histDoc.prompt_tokens || 0,
+                  histDoc.completion_tokens || 0,
+                  histDoc.cached_tokens || 0,
+                  histDoc.reasoning_tokens || 0,
+                  JSON.stringify(histDoc)
+                ).run();
+              } catch (e) {}
             }
+          }
+          if (!histDoc && env.USAGE_KV) {
+            histDoc = await env.USAGE_KV.get("stats_" + dStr, { type: "json" });
+          }
+          if (histDoc && histDoc.requests_total > 0) {
+            mergeDayDocIntoAggregated(aggregated, histDoc, dStr);
           } else {
             aggregated.daily_timeline.push({
               date: dStr.slice(5),
