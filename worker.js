@@ -67,6 +67,7 @@ const CONFIG = {
       "Atria-Dawn-Preview": [1, 4],
       "atria-dawn-preview": [1, 4],
       "u2-flash": [0.5, 2],
+      "glm-4-flash": [0, 0],
       "glm-4.7-flash": [0, 0],
       "ling-3.0-flash": [0.5, 2],
       "ling-3.1-flash": [0.5, 2],
@@ -259,7 +260,7 @@ const CONFIG = {
     zhipu: {
       baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       apiKey: "07569269592b412f885894e6b67901b9.jWKWT2RClREaAaA1",
-      models: ["glm-4.7-flash"]
+      models: ["glm-4-flash", "glm-4.7-flash"]
     },
     inception: {
       baseUrl: "https://api.inceptionlabs.ai/v1",
@@ -277,7 +278,7 @@ const CONFIG = {
     { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
     { provider: "unisound", model: "u2-flash" },
-    { provider: "zhipu", model: "glm-4.7-flash" },
+    { provider: "zhipu", model: "glm-4-flash" },
     { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
     { provider: "sensenova", model: "deepseek-v4-flash" },
     { provider: "agnes", model: "agnes-3.0-flash" },
@@ -294,6 +295,7 @@ const CONFIG = {
     { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
     { provider: "unisound", model: "u2-flash" },
+    { provider: "zhipu", model: "glm-4-flash" },
     { provider: "zhipu", model: "glm-4.7-flash" },
     { provider: "agnes", model: "agnes-3.0-flash" },
     { provider: "agnes", model: "agnes-2.5-flash" },
@@ -1697,6 +1699,7 @@ function deriveProvidersFromModels(models) {
     "Atria-Dawn-Preview": "atria",
     "atria-dawn-preview": "atria",
     "u2-flash": "unisound",
+    "glm-4-flash": "zhipu",
     "glm-4.7-flash": "zhipu",
     "mercury-2.5": "inception",
     "mercury-2": "inception"
@@ -4048,7 +4051,7 @@ export default {
       const channelTable = Object.entries(CONFIG.PROVIDERS).flatMap(([pKey, pVal]) => pVal.models.map(m => ({ provider: pKey, model: m })));
       const listedModels = [
         "auto", "default", "mercury-2.5", "mercury-2", "gpt-oss-120b", "DeepSeek-V4-Flash", "deepseek-v4-flash",
-        "u2-flash", "glm-4.7-flash",
+        "u2-flash", "glm-4-flash", "glm-4.7-flash",
         "Ling-3.0-flash", "Ling-3.1-flash", "Ling-2.6-flash",
         "agnes-3.0-flash", "agnes-2.5-flash", "agnes-image-2.5-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
@@ -4525,7 +4528,7 @@ export default {
         "agnes-image-2.5-flash", "agnes-image-2.1-flash", "agnes-image-2.0-flash",
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.3", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6",
-        "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview", "u2-flash", "glm-4.7-flash",
+        "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview", "u2-flash", "glm-4-flash", "glm-4.7-flash",
         "sensenova-u1-fast", "sensenova-u1.5-lite",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
         "MiMo-V2.6-Flash", "mimo-v2.6-flash",
@@ -4675,8 +4678,9 @@ export default {
 
           // 优雅别名降级：针对已下架停用的旧模型，透明映射至可用的高可用对应同系列/替代模型 (向后兼容历史调用方与平台定时任务)
           if (targetLower === "glm-5.3-flash" || targetLower === "glm-5.3") {
-            registeredChannels.push({ provider: "zhipu", model: "glm-4.7-flash" });
+            registeredChannels.push({ provider: "zhipu", model: "glm-4-flash" });
             registeredChannels.push({ provider: "sensenova", model: "glm-5.2" });
+            registeredChannels.push({ provider: "zhipu", model: "glm-4.7-flash" });
           } else if (targetLower === "deepseek-v4.1-flash") {
             registeredChannels.push({ provider: "sensenova", model: "deepseek-v4-flash" });
             registeredChannels.push({ provider: "eaglesine", model: "DeepSeek-V4-Flash" });
