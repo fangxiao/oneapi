@@ -20,17 +20,20 @@ const CONFIG = {
   // 授权用户 Key 映射表 (生产环境通过 KV 'api_keys' 持久化存储与动态签发管理，避免硬编码)
   USER_KEYS: {},
 
-  // 参考计价: [输入, 输出] ¥/百万 tokens; models 表为各模型牌价 (占位估计值, 可按上游定价页修订), 未列出的回落统一价
+  // 参考计价 (DeepSeek 标准): [无缓存输入, 输出, 缓存输入] ¥/百万 tokens; 未列出模型按基准价与 1折缓存回落
   REFERENCE_PRICING: {
-    input_per_million: 1,
-    output_per_million: 4,
+    input_per_million: 1,         // 无缓存输入 (Cache Miss) 基准价 (¥/1M)
+    cache_input_per_million: 0.1, // 缓存输入 (Cache Hit) 基准价 (¥/1M, DeepSeek 1折)
+    output_per_million: 4,        // 输出生成基准价 (¥/1M)
     models: {
-      "auto": [1, 4],
-      "default": [1, 4],
-      "gpt-oss-120b": [2, 8],
-      "deepseek-v4-flash": [1, 4],
-      "deepseek-v4.1-flash": [1, 4],
-      "deepseek-v4-pro": [2, 8],
+      "auto": [1, 4, 0.1],
+      "default": [1, 4, 0.1],
+      "gpt-oss-120b": [2, 8, 0.2],
+      "deepseek-v4-flash": [1, 4, 0.1],
+      "deepseek-v4.1-flash": [1, 4, 0.1],
+      "deepseek-chat": [1, 4, 0.1],
+      "deepseek-v4-pro": [2, 8, 0.2],
+      "deepseek-reasoner": [2, 8, 0.2],
       "qwen3.8-27b": [1.5, 6],
       "qwen3.8-flash": [0.5, 2],
       "qwen3.8-flash-next": [0.5, 2],
@@ -455,20 +458,29 @@ function resolveUser(token, body, headers, env, apiKeys) {
   return token.length > 8 ? "用户 (" + token.slice(0, 8) + "...)" : "外部用户";
 }
 
-// 按统一参考牌价折算金额 (¥)
-function estimateCostYuan(promptTokens, completionTokens, modelName) {
+// 按统一参考牌价折算金额 (¥): 严格按 DeepSeek 标准区分无缓存输入 (Cache Miss) 与缓存命中 (Cache Hit)
+function estimateCostYuan(promptTokens, completionTokens, modelName, cachedTokens = 0) {
   const pricing = CONFIG.REFERENCE_PRICING;
   let inPrice = pricing.input_per_million;
   let outPrice = pricing.output_per_million;
+  let cachePrice = pricing.cache_input_per_million !== undefined ? pricing.cache_input_per_million : (inPrice * 0.1);
   if (modelName && pricing.models) {
     const hit = pricing.models[String(modelName).toLowerCase()];
-    if (hit) { inPrice = hit[0]; outPrice = hit[1]; }
+    if (hit) {
+      inPrice = hit[0];
+      outPrice = hit[1];
+      cachePrice = (hit.length >= 3 && hit[2] !== undefined) ? hit[2] : (inPrice * 0.1);
+    }
   }
-  return (promptTokens / 1e6) * inPrice + (completionTokens / 1e6) * outPrice;
+  const safePrompt = Math.max(promptTokens || 0, 0);
+  const safeCached = Math.min(Math.max(cachedTokens || 0, 0), safePrompt);
+  const uncachedPrompt = Math.max(safePrompt - safeCached, 0);
+  const safeCompletion = Math.max(completionTokens || 0, 0);
+  return (uncachedPrompt / 1e6) * inPrice + (safeCached / 1e6) * cachePrice + (safeCompletion / 1e6) * outPrice;
 }
 
 function formatCostYuan(amount) {
-  return "¥" + (amount >= 100 ? amount.toFixed(0) : amount >= 1 ? amount.toFixed(2) : amount.toFixed(4));
+  return "¥" + (amount >= 1000 ? amount.toFixed(0) : amount >= 1 ? amount.toFixed(2) : amount.toFixed(4));
 }
 
 // 运行时配置 (KV 持久化): 渠道下架清单与 auto 池自定义覆盖, 配合内存缓存降低边缘 KV 频次
@@ -2804,7 +2816,7 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
   const totalKeysCount = Object.keys(apiKeys || CONFIG.USER_KEYS).length;
   // 历史数据缺输入输出拆分时, 用该时段全局输入占比近似折算
   const ioRatio = stats && stats.tokens_total > 0 ? stats.prompt_tokens / stats.tokens_total : 0.75;
-  // 缺口补价: 已记录的 in/out 照实计价, 记录不到的部分 (老数据) 按全局比例折算; 若为全局 stats 且有各模型明细则按各模型精确累加
+  // 缺口补价: 已记录的 in/out 照实计价, 记录不到的部分 (老数据) 按全局比例折算; 若为全局 stats 且有各模型明细则按各模型精确累加 (支持缓存扣减)
   const costOf = (s) => {
     if (s === stats && s.models && Object.keys(s.models).length > 0) {
       let sum = 0;
@@ -2814,7 +2826,8 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
         sum += estimateCostYuan(
           (mStat.prompt_tokens || 0) + unrec * ioRatio,
           (mStat.completion_tokens || 0) + unrec * (1 - ioRatio),
-          mName
+          mName,
+          mStat.cached_tokens || 0
         );
       }
       return sum;
@@ -2824,7 +2837,8 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
     return estimateCostYuan(
       (s.prompt_tokens || 0) + unrecorded * ioRatio,
       (s.completion_tokens || 0) + unrecorded * (1 - ioRatio),
-      s.__model_name || "auto"
+      s.__model_name || "auto",
+      s.cached_tokens || 0
     );
   };
 
@@ -3517,7 +3531,7 @@ function renderDashboard(stats, recentLogs, runtimeCfg = { disabled_channels: []
       <div class="card" style="border-left: 4px solid #f59e0b;">
         <div class="card-title">参考费用 (¥)</div>
         <div class="card-value" style="color: #b45309;">${formatCostYuan(costOf(stats))}</div>
-        <div class="card-sub">按 auto 智选基准价 (输入 ¥${CONFIG.REFERENCE_PRICING.input_per_million} / 输出 ¥${CONFIG.REFERENCE_PRICING.output_per_million} 每百万)</div>
+        <div class="card-sub">按 DeepSeek 标准计费 (无缓存 ¥${CONFIG.REFERENCE_PRICING.input_per_million} / 缓存 ¥${CONFIG.REFERENCE_PRICING.cache_input_per_million} / 输出 ¥${CONFIG.REFERENCE_PRICING.output_per_million} 每百万)</div>
       </div>
       <div class="card">
         <div class="card-title">命中缓存 (Cache)</div>
@@ -4171,7 +4185,7 @@ export default {
         lines = lines.concat(Object.entries(exportStats.users || {}).map(([u, s2]) => {
           const rec = (s2.prompt_tokens || 0) + (s2.completion_tokens || 0);
           const gap = Math.max((s2.tokens || 0) - rec, 0);
-          const cost = estimateCostYuan((s2.prompt_tokens || 0) + gap * ioRatio, (s2.completion_tokens || 0) + gap * (1 - ioRatio));
+          const cost = estimateCostYuan((s2.prompt_tokens || 0) + gap * ioRatio, (s2.completion_tokens || 0) + gap * (1 - ioRatio), null, s2.cached_tokens || 0);
           return [csvEsc(u), s2.requests || 0, s2.tokens || 0, s2.prompt_tokens || "", s2.completion_tokens || "", s2.cached_tokens || 0, cost.toFixed(4)].join(",");
         }));
       } else if (type === "providers") {
@@ -4180,7 +4194,7 @@ export default {
         lines = lines.concat(Object.entries(exportStats.providers || {}).map(([p, s2]) => {
           const rec = (s2.prompt_tokens || 0) + (s2.completion_tokens || 0);
           const gap = Math.max((s2.tokens || 0) - rec, 0);
-          const cost = estimateCostYuan((s2.prompt_tokens || 0) + gap * ioRatio, (s2.completion_tokens || 0) + gap * (1 - ioRatio));
+          const cost = estimateCostYuan((s2.prompt_tokens || 0) + gap * ioRatio, (s2.completion_tokens || 0) + gap * (1 - ioRatio), null, s2.cached_tokens || 0);
           const pName = (CONFIG.PROVIDER_NAMES && CONFIG.PROVIDER_NAMES[p]) || p;
           return [csvEsc(p), csvEsc(pName), s2.requests || 0, s2.tokens || 0, s2.prompt_tokens || "", s2.completion_tokens || "", s2.cached_tokens || 0, cost.toFixed(4)].join(",");
         }));
