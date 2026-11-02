@@ -133,7 +133,7 @@ const CONFIG = {
     eaglesine: {
       baseUrl: "https://api.eaglesine.com/v1",
       apiKey: "",
-      models: ["gpt-oss-120b", "DeepSeek-V4-Flash", "Kimi-K2.6", "qwen3.8-27b", "gemma-4-31b", "DeepSeek-V4-Pro", "whisper-1"]
+      models: ["gpt-oss-120b", "DeepSeek-V4-Flash", "DeepSeek-V4.1-Flash", "Kimi-K2.6", "qwen3.8-27b", "gemma-4-31b", "DeepSeek-V4-Pro", "whisper-1"]
     },
     bai: {
       baseUrl: "https://api.b.ai/v1",
@@ -4682,6 +4682,7 @@ export default {
             registeredChannels.push({ provider: "sensenova", model: "glm-5.2" });
             registeredChannels.push({ provider: "zhipu", model: "glm-4.7-flash" });
           } else if (targetLower === "deepseek-v4.1-flash") {
+            registeredChannels.push({ provider: "eaglesine", model: "DeepSeek-V4.1-Flash" });
             registeredChannels.push({ provider: "sensenova", model: "deepseek-v4-flash" });
             registeredChannels.push({ provider: "eaglesine", model: "DeepSeek-V4-Flash" });
             registeredChannels.push({ provider: "amd", model: "DeepSeek-V4-Flash" });
