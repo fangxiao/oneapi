@@ -67,6 +67,7 @@ const CONFIG = {
       "Atria-Dawn-Preview": [1, 4],
       "atria-dawn-preview": [1, 4],
       "u2-flash": [0.5, 2],
+      "u2-decision": [0.5, 2],
       "glm-4-flash": [0, 0],
       "glm-4.7-flash": [0, 0],
       "ling-3.0-flash": [0.5, 2],
@@ -267,6 +268,13 @@ const CONFIG = {
       apiKey: "sk_ba649ac307b25f43a6869be65224eafe",
       models: ["mercury-2.5", "mercury-2"]
     }
+  },
+
+  // 🧭 决策模型通道 (Kev/Jev 协议): /v1/systemone 原样透传, 非 chat 生成通道, 不参与任何 auto 路由池
+  DECISION_MODEL: {
+    provider: "unisound",
+    model: "u2-decision",
+    path: "/systemone"
   },
 
   // ⚡ 极速精选把关池 (fast / auto / default): 准入门槛极高，推理极速，长上下文，高并发稳定性
@@ -1699,6 +1707,7 @@ function deriveProvidersFromModels(models) {
     "Atria-Dawn-Preview": "atria",
     "atria-dawn-preview": "atria",
     "u2-flash": "unisound",
+    "u2-decision": "unisound",
     "glm-4-flash": "zhipu",
     "glm-4.7-flash": "zhipu",
     "mercury-2.5": "inception",
@@ -4057,7 +4066,7 @@ export default {
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
-        "MiMo-V2.6-Flash", "mimo-v2.6-flash",
+        "MiMo-V2.6-Flash", "mimo-v2.6-flash", "u2-decision",
         "cf-llama-3.3-70b", "cf-llama-3.1-8b", "cf-llama-4-scout", "cf-qwen3-30b", "cf-deepseek-r1-32b", "cf-glm-4.7-flash",
         "whisper-1"
       ].filter(id => {
@@ -4531,7 +4540,7 @@ export default {
         "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview", "u2-flash", "glm-4-flash", "glm-4.7-flash",
         "sensenova-u1-fast", "sensenova-u1.5-lite",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
-        "MiMo-V2.6-Flash", "mimo-v2.6-flash",
+        "MiMo-V2.6-Flash", "mimo-v2.6-flash", "u2-decision",
         "intern-latest", "intern-s2", "intern-s1-pro", "internvl-latest",
         "qwen/qwen3.8-27b:free", "z-ai/glm-5.2:free", "google/gemma-4-26b-a4b-it:free",
         "google/gemma-4-31b-it:free", "nvidia/nemotron-3.5-lightning:free",
@@ -4564,6 +4573,7 @@ export default {
     const isChatCompletions = cleanPath === "/v1/chat/completions" || cleanPath === "/chat/completions";
     const isImageGenerations = cleanPath === "/v1/images/generations" || cleanPath === "/images/generations";
     const isAudioTranscriptions = cleanPath === "/v1/audio/transcriptions" || cleanPath === "/audio/transcriptions";
+    const isSystemone = cleanPath === "/v1/systemone" || cleanPath === "/systemone";
 
     // 2. 对话补全端点
     if (isChatCompletions || isAnthropicMessages) {
@@ -4589,6 +4599,20 @@ export default {
           return new Response(JSON.stringify({
             error: {
               message: `模型 '${targetModel}' 为语音转文字(STT)音频模型，请调用 /v1/audio/transcriptions 端点，而非对话补全端点。`,
+              type: "invalid_request_error",
+              code: "invalid_model_endpoint"
+            }
+          }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+
+        // 决策模型误调用聊天补全端点时的拦截: 决策模型输出结构化概率而非自由文本, 必须走 /v1/systemone
+        if (targetModel.toLowerCase() === CONFIG.DECISION_MODEL.model) {
+          return new Response(JSON.stringify({
+            error: {
+              message: `模型 '${targetModel}' 为决策模型 (输出结构化决策与概率分布，非对话文本)，请调用 /v1/systemone 端点 (Kev/Jev 协议: state + questions)，而非对话补全端点。`,
               type: "invalid_request_error",
               code: "invalid_model_endpoint"
             }
@@ -5220,7 +5244,75 @@ export default {
       }
     }
 
-    // 4. 语音转文字端点 (/v1/audio/transcriptions 或 /audio/transcriptions)
+    // 4. 决策模型端点 (/v1/systemone 或 /systemone): Kev/Jev 协议原样透传, 结构化决策 (choice/noul/score + 概率分布)
+    if (isSystemone) {
+      try {
+        const body = await request.json();
+        if (body.state === undefined || body.state === null || typeof body.questions !== "object" || body.questions === null || Array.isArray(body.questions) || Object.keys(body.questions).length === 0) {
+          return new Response(JSON.stringify({
+            error: {
+              message: "决策请求必须包含 state (string/object/array) 与至少一个 question 的 questions 对象，协议见 /docs。客户端可通过 /v1/chat/completions 之外的 /v1/systemone 端点调用决策模型 u2-decision。",
+              type: "invalid_request_error",
+              code: "invalid_decision_request"
+            }
+          }), { status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
+        }
+
+        const dCfg = CONFIG.DECISION_MODEL;
+        const providerInfo = CONFIG.PROVIDERS[dCfg.provider];
+        const payload = { ...body, model: body.model || dCfg.model };
+        delete payload.stream;
+
+        const startTime = Date.now();
+        const upstreamResponse = await fetch(providerInfo.baseUrl + dCfg.path, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${getProviderApiKey(providerInfo)}`
+          },
+          body: JSON.stringify(payload)
+        });
+        const resText = await upstreamResponse.text();
+
+        let inputTokens = 0;
+        try {
+          const parsed = JSON.parse(resText);
+          inputTokens = Number(parsed?.usage?.input_tokens) || 0;
+        } catch (_) { /* 上游错误响应无 usage, 保持 0 */ }
+
+        if (upstreamResponse.ok) {
+          const userName = resolveUser(token, body, request.headers, env, apiKeys);
+          const stateSummary = typeof body.state === "string" ? body.state : JSON.stringify(body.state);
+          ctx.waitUntil(recordUsage(env, {
+            user: userName,
+            model: dCfg.model,
+            routed_model: dCfg.model,
+            provider: dCfg.provider,
+            prompt_tokens: inputTokens,
+            completion_tokens: 0,
+            cached_tokens: 0,
+            reasoning_tokens: 0,
+            duration_ms: Date.now() - startTime,
+            prompt: stateSummary.slice(0, 600)
+          }));
+        }
+
+        return new Response(resText, {
+          status: upstreamResponse.status,
+          headers: {
+            "Content-Type": upstreamResponse.headers.get("content-type") || "application/json",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      } catch (err) {
+        return new Response(JSON.stringify({ error: { message: err.message } }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // 5. 语音转文字端点 (/v1/audio/transcriptions 或 /audio/transcriptions)
     if (isAudioTranscriptions) {
       try {
         const providerInfo = CONFIG.PROVIDERS.eaglesine;
@@ -5255,7 +5347,7 @@ export default {
     return new Response(JSON.stringify({
       status: "ok",
       service: "Free LLM Gateway on Cloudflare Worker",
-      endpoints: ["/v1/chat/completions", "/v1/models", "/v1/messages", "/v1/images/generations", "/v1/audio/transcriptions", "/usage"]
+      endpoints: ["/v1/chat/completions", "/v1/models", "/v1/messages", "/v1/systemone", "/v1/images/generations", "/v1/audio/transcriptions", "/usage"]
     }), {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
     });
