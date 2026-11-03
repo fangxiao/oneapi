@@ -142,12 +142,12 @@ const CONFIG = {
     bai: {
       baseUrl: "https://api.b.ai/v1",
       apiKey: "",
-      models: ["glm-5.2", "grok-4.6", "grok-4.5"]
+      models: []
     },
     amd: {
       baseUrl: "https://developer.amd.com.cn/radeon/api/v1",
       apiKey: "",
-      models: ["DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4-Flash", "DeepSeek-V4.1-Flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B", "MiMo-V2.6-Flash"]
+      models: ["DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4-Flash", "DeepSeek-V4.1-Flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B"]
     },
     volces: {
       baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
@@ -327,7 +327,6 @@ const CONFIG = {
     { provider: "discovery", model: "deepseek-v4-pro-0813" },
     { provider: "amd", model: "DeepSeek-V4.1-Flash" },
     { provider: "amd", model: "Qwen3.8-Flash-Next" },
-    { provider: "amd", model: "MiMo-V2.6-Flash" },
     { provider: "agnes", model: "agnes-2.0-flash" },
     { provider: "agnes", model: "agnes-3.0-flash-max" },
     { provider: "agnes", model: "agnes-2.5-pro" }
@@ -343,7 +342,6 @@ const CONFIG = {
     { provider: "eaglesine", model: "gemma-4-31b" },
     { provider: "amd", model: "DeepSeek-V4-Flash-Vision-Exp" },
     { provider: "amd", model: "DeepSeek-V4.1-Flash" },
-    { provider: "amd", model: "MiMo-V2.6-Flash" },
     { provider: "openrouter", model: "stealth/space-bunny-alpha" }
   ],
 
@@ -4080,7 +4078,7 @@ export default {
         "qwen3.8-27b", "qwen3.8-flash", "gemma-4-31b", "glm-5.3-flash", "glm-5.2",
         "hy3", "mimo-v2.5", "sensenova-6.8-flash-lite", "Kimi-K2.6", "deepseek-v4-pro",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
-        "MiMo-V2.6-Flash", "mimo-v2.6-flash", "u2-decision",
+        "mimo-v2.6-flash", "u2-decision",
         "cf-llama-3.3-70b", "cf-llama-3.1-8b", "cf-llama-4-scout", "cf-qwen3-30b", "cf-deepseek-r1-32b", "cf-glm-4.7-flash",
         "whisper-1"
       ].filter(id => {
@@ -4554,7 +4552,7 @@ export default {
         "minimax-m3", "dots3-note-prev", "LongCat-2.5-Preview", "Atria-Dawn-Preview", "u2-flash", "glm-4-flash", "glm-4.7-flash",
         "sensenova-u1-fast", "sensenova-u1.5-lite",
         "DeepSeek-V4-Flash-Vision-Exp", "DeepSeek-V4.1-Flash", "deepseek-v4.1-flash", "Qwen3.8-Flash-Next", "MiniCPM5-2B",
-        "MiMo-V2.6-Flash", "mimo-v2.6-flash", "u2-decision",
+        "mimo-v2.6-flash", "u2-decision",
         "intern-latest", "intern-s2", "intern-s1-pro", "internvl-latest",
         "qwen/qwen3.8-27b:free", "z-ai/glm-5.2:free", "google/gemma-4-26b-a4b-it:free",
         "google/gemma-4-31b-it:free", "nvidia/nemotron-3.5-lightning:free",
