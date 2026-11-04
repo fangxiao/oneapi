@@ -282,18 +282,15 @@ const CONFIG = {
 
   // ⚡ 极速精选把关池 (fast / auto / default): 准入门槛极高，推理极速，长上下文，高并发稳定性
   AUTO_CANDIDATES: [
-    { provider: "inception", model: "mercury-2.5" },
-    { provider: "atria", model: "Atria-Dawn-Preview" },
-    { provider: "longcat", model: "LongCat-2.5-Preview" },
-    { provider: "mimo", model: "mimo-v2.6-flash" },
-    { provider: "diandian", model: "dots3-note-prev" },
-    { provider: "antling", model: "Ling-3.0-flash" },
-    { provider: "unisound", model: "u2-flash" },
     { provider: "zhipu", model: "glm-4-flash" },
-    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
-    { provider: "sensenova", model: "deepseek-v4-flash" },
-    { provider: "agnes", model: "agnes-3.0-flash" },
-    { provider: "agnes", model: "agnes-2.5-flash" }
+    { provider: "antling", model: "Ling-3.0-flash" },
+    { provider: "antling", model: "Ling-3.1-flash" },
+    { provider: "inception", model: "mercury-2.5" },
+    { provider: "discovery", model: "qwen3.8-27b" },
+    { provider: "internai", model: "intern-s2" },
+    { provider: "longcat", model: "LongCat-2.5-Preview" },
+    { provider: "atria", model: "Atria-Dawn-Preview" },
+    { provider: "amd", model: "DeepSeek-V4.1-Flash" }
   ],
 
   // 🌐 全量模型池 (all): 涵盖平台接入的所有可用对话模型 (大模型、Pro、专业模型全量分流)
@@ -302,47 +299,27 @@ const CONFIG = {
     { provider: "inception", model: "mercury-2" },
     { provider: "atria", model: "Atria-Dawn-Preview" },
     { provider: "longcat", model: "LongCat-2.5-Preview" },
-    { provider: "mimo", model: "mimo-v2.6-flash" },
     { provider: "diandian", model: "dots3-note-prev" },
     { provider: "antling", model: "Ling-3.0-flash" },
-    { provider: "unisound", model: "u2-flash" },
+    { provider: "antling", model: "Ling-3.1-flash" },
     { provider: "zhipu", model: "glm-4-flash" },
-    { provider: "zhipu", model: "glm-4.7-flash" },
-    { provider: "agnes", model: "agnes-3.0-flash" },
-    { provider: "agnes", model: "agnes-2.5-flash" },
-    { provider: "sensenova", model: "deepseek-v4-flash" },
-    { provider: "sensenova", model: "glm-5.2" },
     { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
-    { provider: "eaglesine", model: "DeepSeek-V4-Flash" },
-    { provider: "eaglesine", model: "DeepSeek-V4-Pro" },
     { provider: "eaglesine", model: "Kimi-K2.6" },
-    { provider: "eaglesine", model: "qwen3.8-27b" },
     { provider: "eaglesine", model: "gpt-oss-120b" },
-    { provider: "internai", model: "intern-latest" },
     { provider: "internai", model: "intern-s2" },
     { provider: "discovery", model: "intern-s2" },
     { provider: "discovery", model: "kimi-k2.6" },
     { provider: "discovery", model: "qwen3.8-27b" },
     { provider: "discovery", model: "minimax-m3" },
-    { provider: "discovery", model: "deepseek-v4-pro-0813" },
     { provider: "amd", model: "DeepSeek-V4.1-Flash" },
-    { provider: "amd", model: "Qwen3.8-Flash-Next" },
-    { provider: "agnes", model: "agnes-2.0-flash" },
-    { provider: "agnes", model: "agnes-3.0-flash-max" },
-    { provider: "agnes", model: "agnes-2.5-pro" }
+    { provider: "amd", model: "Qwen3.8-Flash-Next" }
   ],
 
   // 🖼️ 多模态视觉池 (multimodal / 带图请求自动升轨)
   MULTIMODAL_CANDIDATES: [
-    { provider: "atria", model: "Atria-Dawn-Preview" },
     { provider: "antling", model: "Ling-3.0-flash-VL" },
-    { provider: "agnes", model: "agnes-3.0-flash" },
-    { provider: "sensenova", model: "sensenova-6.8-flash-lite" },
-    { provider: "discovery", model: "deepseek-v4-flash-vision" },
-    { provider: "eaglesine", model: "gemma-4-31b" },
-    { provider: "amd", model: "DeepSeek-V4-Flash-Vision-Exp" },
     { provider: "amd", model: "DeepSeek-V4.1-Flash" },
-    { provider: "openrouter", model: "stealth/space-bunny-alpha" }
+    { provider: "sensenova", model: "sensenova-6.8-flash-lite" }
   ],
 
   // 🎨 文生图池 (images 端点与画图请求自适应)
@@ -361,7 +338,6 @@ const AUTO_EXCLUDED_MODELS = new Set([
   "mimo-v2.5",
   "glm-5.3-flash",
   "glm-5.3",
-  "deepseek-v4.1-flash",
   "deepseek-v4-flash-0731",
   "@cf/meta/llama-3.1-8b-instruct-fast",
   "cf-llama-3.1-8b",
